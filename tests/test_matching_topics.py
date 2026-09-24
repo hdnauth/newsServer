@@ -81,3 +81,33 @@ def test_topics_yaml_rejects_unknown_hint(tmp_path: Path):
         assert "b" in str(e)
     else:
         raise AssertionError("알 수 없는 주제를 허용했다")
+
+
+def test_theme_topics_for_etf_names():
+    """테마 ETF 가 주제를 받는다 — 예전에는 방산·원전·우주 상품이 전부 빈 목록이었다."""
+    r = rules()
+    assert r.for_name("KODEX 방산TOP10") == ["defense"]
+    assert r.for_name("ACE 미국SMR원자력TOP10") == ["nuclear"]
+    assert r.for_name("TIGER 미국우주테크") == ["space"]
+    assert r.for_name("SOL 미국양자컴퓨팅TOP10") == ["quantum"]
+    assert r.for_name("KODEX 인도Nifty50") == ["india"]
+    assert r.for_name("ACE 베트남VN30(합성)") == ["vietnam"]
+    assert "power" in r.for_name("KODEX 미국AI전력핵심인프라")
+
+
+def test_name_hint_not_terms():
+    """「인도」 힌트가 「인도네시아」 상품에 붙으면 안 된다."""
+    r = rules()
+    assert "india" not in r.for_name("KODEX 인도네시아MSCI")
+
+
+def test_theme_topics_avoid_ambiguous_korean_words():
+    """경계가 없는 한국어에서 다른 뜻과 겹치는 짧은 단어로 태깅하지 않는다."""
+    r = rules()
+    assert "quantum" not in r.extract("한미 양자 회담 개최")
+    assert "india" not in r.extract("11월 인도분 서부텍사스산원유 하락")
+    assert "india" not in r.extract("니프티 피프티의 교훈")
+    assert "defense" not in r.extract("무기한 연기")
+    assert "gold" not in r.extract("Goldman Sachs raises target")
+    assert "india" in r.extract("인도 증시 사상 최고")
+    assert "defense" in r.extract("방산株 강세")

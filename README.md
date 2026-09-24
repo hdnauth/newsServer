@@ -92,6 +92,7 @@ Yahoo 종목 뉴스(미국, 요약 포함), Google 뉴스 종목 검색(한국, 
 ### 주제 — `config/topics.yaml`
 
 키워드 규칙으로 주제를 붙인다. 규칙을 바꾸면 `version` 을 올린다 — 재시작 시 보관 중인 기사를 재태깅한다.
+`name_hints` 는 상품 이름 → 주제 추론(`/v1/topics/for`)용이며, `not_terms` 로 겹치는 이름을 제외한다(예: 「인도」 힌트에서 「인도네시아」 제외).
 
 ### 심볼 — `config/symbols/`
 

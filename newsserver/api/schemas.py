@@ -67,6 +67,9 @@ class BySymbolsRequest(BaseModel):
     kind: Literal["all", "news", "filing"] = "all"
     time_basis: Literal["ts", "collected"] = "ts"
     dedup: Literal["none", "title"] = "none"
+    # 헤드라인 조회의 같은 이름 파라미터와 같은 뜻 (피드 소속 기준)
+    sources: list[str] = Field(default_factory=list)
+    exclude_sources: list[str] = Field(default_factory=list)
 
 
 class BySymbolsResponse(BaseModel):

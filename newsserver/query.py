@@ -329,12 +329,28 @@ class QueryService:
                 "is_filing": spec.is_filing}
 
     # ── 주제 통계 ────────────────────────────────────────────────────────────
-    async def topic_stats(self, days: float, market: str | None = None) -> dict[str, Any]:
+    async def topic_stats(self, days: float, market: str | None = None, *,
+                          sources: list[str] | None = None,
+                          kind: Literal["all", "news", "filing"] = "all") -> dict[str, Any]:
+        """기간 내 주제 분포.
+
+        ``sources`` 는 헤드라인 조회와 같은 뜻이다 — 그 피드들 중 하나에라도 실린 기사.
+        기사의 ``category`` 는 **처음 수집한 피드**의 것이라 일반 피드(15분 주기)가 먼저
+        가져간 경제 기사는 ``general`` 로 남는다. 분포의 분모를 정할 때는 피드 소속으로
+        거르는 쪽이 정확하다.
+        """
         cutoff = to_iso(utcnow() - dt.timedelta(days=days))
         w = _Where()
         w.add("a.ts >= ?", cutoff)
         if market:
             w.add("a.market = ?", market)
+        if sources:
+            w.add(f"a.id IN (SELECT article_id FROM article_feeds WHERE source_key IN ({_qs(sources)}))",
+                  *sources)
+        if kind == "news":
+            w.add("a.is_filing = 0")
+        elif kind == "filing":
+            w.add("a.is_filing = 1")
         async with self.db.read() as conn:
             cur = await conn.execute(f"SELECT COUNT(*) FROM articles a WHERE {w.sql()}", w.params)
             total_articles = (await cur.fetchone())[0]
@@ -348,6 +364,8 @@ class QueryService:
         return {
             "days": days,
             "market": market,
+            "sources": sources or None,
+            "kind": kind,
             "total_articles": total_articles,
             "topics": [
                 {

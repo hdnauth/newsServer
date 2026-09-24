@@ -105,8 +105,11 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 {"symbols": [{"symbol": "NVDA", "market": "US", "names": ["NVIDIA Corporation"]},
              {"symbol": "005930", "market": "KR"}],
  "hours": 16, "limit_per_symbol": 8,
- "match": "any", "match_summary": true, "filings": "auto", "kind": "all", "time_basis": "ts", "dedup": "none"}
+ "match": "any", "match_summary": true, "filings": "auto", "kind": "all", "time_basis": "ts", "dedup": "none",
+ "sources": [], "exclude_sources": []}
 ```
+
+`sources`·`exclude_sources` 는 `GET /v1/headlines` 의 같은 이름 파라미터와 같은 뜻이다(피드 소속 기준).
 
 → `{"results": {"US:NVDA": [Headline…], "KR:005930": [Headline…]}}`
 
@@ -122,7 +125,7 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 |---|---|
 | `GET /v1/topics` | `{"version": 1, "topics": [{"key": "bond", "label": "채권·금리"}, …]}` |
 | `GET /v1/topics/for?name=&symbol=` | 종목·상품 이름에서 관련 주제 추론. `name=KODEX 미국나스닥100` → `nasdaq`, `bigtech` |
-| `GET /v1/topics/stats?days=30&market=` | 기간 내 주제별 기사 수. `share_pct` = 전체 주제 태그 중 비중, `article_pct` = 기사 중 비중 |
+| `GET /v1/topics/stats?days=30&market=&sources=&kind=` | 기간 내 주제별 기사 수. `share_pct` = 전체 주제 태그 중 비중, `article_pct` = 기사 중 비중. `sources` 는 그 피드들에 실린 기사만(스포츠·연예 같은 일반 피드를 분모에서 뺄 때), `kind` 는 `all` \| `news` \| `filing` |
 
 ---
 
