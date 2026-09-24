@@ -1,0 +1,36 @@
+# 수동 별칭 — 서버 시작 시 심볼 사전에 합쳐진다 (API 로 등록한 별칭과 합집합).
+#
+# 별칭은 수집 시 사전 태깅과 조회 시 텍스트 매칭 모두에 쓰인다. 큐레이션 별칭은 자동 수집
+# 이름에 적용하는 길이·일반명사 제한을 받지 않으므로, 다른 뜻으로 흔히 쓰이는 단어는 넣지 말 것.
+# 사전(SEC·DART)에 없는 종목은 name 을 함께 적으면 새로 등록된다.
+
+symbols:
+  # ── 미국: 한글 표기, 일반명사와 겹쳐 자동 태깅에서 빠지는 영문 상호 ──
+  - {market: US, symbol: AAPL, aliases: [애플, Apple]}
+  - {market: US, symbol: MSFT, aliases: [마이크로소프트, Microsoft]}
+  - {market: US, symbol: NVDA, aliases: [엔비디아, Nvidia]}
+  - {market: US, symbol: GOOGL, aliases: [알파벳, 구글, Alphabet, Google]}
+  - {market: US, symbol: GOOG, aliases: [알파벳, 구글, Alphabet, Google]}
+  - {market: US, symbol: AMZN, aliases: [아마존, Amazon]}
+  - {market: US, symbol: META, aliases: [메타플랫폼스, Meta Platforms]}
+  - {market: US, symbol: TSLA, aliases: [테슬라, Tesla]}
+  - {market: US, symbol: AVGO, aliases: [브로드컴, Broadcom]}
+  - {market: US, symbol: AMD, aliases: [AMD]}
+  - {market: US, symbol: INTC, aliases: [인텔, Intel]}
+  - {market: US, symbol: MU, aliases: [마이크론, Micron]}
+  - {market: US, symbol: QCOM, aliases: [퀄컴, Qualcomm]}
+  - {market: US, symbol: TSM, aliases: [TSMC]}
+  - {market: US, symbol: ASML, aliases: [ASML]}
+  - {market: US, symbol: NFLX, aliases: [넷플릭스, Netflix]}
+  - {market: US, symbol: ORCL, aliases: [오라클, Oracle]}
+  - {market: US, symbol: PLTR, aliases: [팔란티어, Palantir]}
+  - {market: US, symbol: JPM, aliases: [JP모건, JPMorgan]}
+
+  # ── 한국: 약칭·영문 표기 ──
+  - {market: KR, symbol: "005930", aliases: [Samsung Electronics]}
+  - {market: KR, symbol: "000660", aliases: [하이닉스, SK hynix]}
+  - {market: KR, symbol: "005380", aliases: [현대차, Hyundai Motor]}
+  - {market: KR, symbol: "000270", aliases: [Kia]}
+  - {market: KR, symbol: "035420", aliases: [네이버, Naver]}
+  - {market: KR, symbol: "373220", aliases: [LG엔솔]}
+  - {market: KR, symbol: "005490", aliases: [포스코홀딩스]}

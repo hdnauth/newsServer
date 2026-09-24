@@ -1,0 +1,8 @@
+symbols:
+  - {market: KR, symbol: "005930", name: 삼성전자, aliases: [Samsung Electronics]}
+  - {market: KR, symbol: "005380", name: 현대자동차, aliases: [현대차]}
+  - {market: KR, symbol: "000660", name: SK하이닉스, aliases: [하이닉스]}
+  - {market: KR, symbol: "011200", name: HMM}
+  - {market: US, symbol: NVDA, name: NVIDIA CORP, aliases: [엔비디아]}
+  - {market: US, symbol: AAPL, name: Apple Inc., aliases: [애플, Apple]}
+  - {market: US, symbol: GOOGL, name: Alphabet Inc., aliases: [구글]}

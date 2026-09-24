@@ -1,0 +1,23 @@
+# ── 환경 변수 ──
+.env
+
+# ── Python ──
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# ── 런타임 데이터 ──
+data/
+.pids/
+
+# ── 로컬 메모 (저장소 밖 정보) ──
+.local/
+
+# ── 기타 ──
+.claude/
+.DS_Store

@@ -1,0 +1,109 @@
+# 주제 태깅 규칙 — 규칙을 바꾸면 version 을 올릴 것 (서버가 보관 중인 기사를 재태깅한다)
+#
+#   terms    : 대소문자 무시. 영숫자로 시작/끝나면 영숫자 경계 필요, 공백은 0개 이상 공백과 매칭
+#   cs_terms : 대소문자 구분 (소문자일 때 다른 뜻인 약어)
+version: 1
+
+topics:
+  # ── 지수 ──
+  - key: kospi
+    label: 코스피
+    terms: [코스피, KOSPI, 국내 증시, 유가증권시장]
+  - key: kosdaq
+    label: 코스닥
+    terms: [코스닥, KOSDAQ]
+  - key: sp500
+    label: S&P500
+    terms: [S&P 500, 에스앤피, 스탠더드앤드푸어스]
+  - key: nasdaq
+    label: 나스닥
+    terms: [나스닥, Nasdaq]
+  - key: dow
+    label: 다우
+    terms: [다우존스, 다우 지수, 다우산업, Dow Jones]
+
+  # ── 섹터·테마 ──
+  - key: semiconductor
+    label: 반도체
+    terms: [반도체, 파운드리, HBM, semiconductor, semiconductors, chipmaker, chipmakers, foundry, Nvidia, 엔비디아]
+  - key: bigtech
+    label: 빅테크
+    terms: [빅테크, big tech, 애플, Apple, 마이크로소프트, Microsoft, 구글, Google, Alphabet, 아마존, Amazon, 메타플랫폼스]
+    cs_terms: [Meta]
+  - key: ai
+    label: AI
+    terms: [인공지능, 생성형, 챗GPT, ChatGPT, OpenAI, artificial intelligence]
+    cs_terms: [AI]
+  - key: battery
+    label: 2차전지
+    terms: [2차전지, 이차전지, 배터리, 양극재, 음극재, 리튬, battery, batteries, lithium]
+  - key: bio
+    label: 바이오·제약
+    terms: [바이오, 제약, 신약, 임상, biotech, pharma, pharmaceutical, pharmaceuticals]
+    cs_terms: [FDA]
+  - key: realestate
+    label: 부동산
+    terms: [부동산, 아파트값, 집값, 주택가격, 리츠, REIT, REITs, real estate, housing market]
+  - key: crypto
+    label: 가상자산
+    terms: [비트코인, 가상자산, 암호화폐, 가상화폐, 이더리움, 스테이블코인, Bitcoin, crypto, cryptocurrency, Ethereum, stablecoin]
+
+  # ── 거시·자산 ──
+  - key: bond
+    label: 채권·금리
+    terms: [채권, 국채, 금리, 기준금리, 수익률 곡선, 연준, FOMC, Treasury, Treasuries, yield, yields, bond, bonds]
+    cs_terms: [Fed]
+  - key: fx
+    label: 환율
+    terms: [환율, 원화, 달러, 외환, 원/달러, USD/KRW, exchange rate, forex, dollar]
+  - key: gold
+    label: 금
+    terms: [금값, 금 가격, 금 시세, 금현물, 귀금속, 은값, gold, bullion, silver]
+  - key: oil
+    label: 유가
+    terms: [유가, 원유, 석유, 브렌트, OPEC, crude, WTI, Brent]
+  - key: dividend
+    label: 배당
+    terms: [배당, 분배금, 배당락, dividend, dividends]
+  - key: inflation
+    label: 물가
+    terms: [물가, 소비자물가, 인플레이션, 디플레이션, inflation, deflation, CPI, PCE]
+  - key: etf
+    label: ETF
+    terms: [ETF, ETFs, 상장지수펀드]
+
+  # ── 지역 ──
+  - key: china
+    label: 중국
+    terms: [중국, 차이나, 항셍, 위안화, China, Chinese, Hang Seng, yuan]
+  - key: japan
+    label: 일본
+    terms: [일본, 닛케이, 엔화, Japan, Japanese, Nikkei, yen]
+    cs_terms: [BOJ]
+
+# 종목·상품 이름 → 관련 주제 (GET /v1/topics/for). 이름에 위 주제 키워드가 있으면 그것도 포함된다.
+name_hints:
+  - terms: [나스닥 100, QQQ]
+    topics: [nasdaq, bigtech]
+  - terms: [S&P 500, SPY, VOO, IVV]
+    topics: [sp500]
+  - terms: [다우존스, DIA]
+    topics: [dow]
+  - terms: [반도체, SOXX, SMH]
+    topics: [semiconductor]
+  - terms: [배당, SCHD, VYM, DGRO]
+    topics: [dividend]
+  - terms: [채권, 국고채, TLT, AGG, BND]
+    topics: [bond]
+  - terms: [금현물, GLD, IAU]
+    topics: [gold]
+  - terms: [원유, USO, XLE]
+    topics: [oil]
+  - terms: ["200", 코스피, KOSPI]
+    topics: [kospi]
+  - terms: [코스닥, KOSDAQ]
+    topics: [kosdaq]
+  - terms: [중국, 차이나, 항셍]
+    topics: [china]
+  - terms: [일본, TOPIX, 닛케이]
+    topics: [japan]
