@@ -66,6 +66,10 @@ def build_search_terms(symbol: str, market: str, names: Sequence[str] = ()) -> l
     seen: set[str] = set()
     for c in candidates:
         t = (c or "").strip()
+        # 쉼표가 남은 정식 법인 표기("SAMSUNG ELECTRONICS CO,.LTD")는 기사에 그대로 나오지 않는다 —
+        # 접미사를 뗀 상호가 이미 후보에 있다
+        if "," in t:
+            continue
         for variant in (t, t.replace(" ", "")):
             low = variant.lower()
             # 1글자 키워드는 오탐이 압도적이라 제외

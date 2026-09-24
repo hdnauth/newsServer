@@ -7,6 +7,7 @@
 - 조회: 종목·주제·카테고리·시장·전문 검색·증분 커서
 - 종목 연결: 소스 태그·공시 종목코드·CIK·사전(회사명·별칭) 태깅 + 조회 시 텍스트 매칭
 - 저장: SQLite(WAL) + FTS5, 기본 1년 보관, 일일 gzip 백업
+- 운영 콘솔: `http://<서버>:5200/` — 소스 상태·조회 테스터·수집량·태깅/별칭 (빌드 없는 단일 페이지)
 - 스택: Python 3.12, FastAPI, aiosqlite, httpx, feedparser
 
 문서: [설계](docs/DESIGN.md) · [API](docs/API.md)
@@ -33,6 +34,17 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]" -e client
 
 처음 기동하면 모든 소스를 즉시 한 번 수집하고, 자격 증명이 있으면 SEC·DART 심볼 사전을 내려받는다(수 초).
 
+### LAN 공개
+
+기본은 이 머신에서만 접근(`127.0.0.1`)이다. 다른 기기에서 API·콘솔을 쓰려면 `.env` 에서
+
+```bash
+SERVER_HOST=0.0.0.0
+API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없이 가능
+```
+
+으로 바꾸고 재시작한다. 인증은 공유 토큰 하나뿐이므로 신뢰할 수 있는 내부망에서만 공개한다.
+
 ---
 
 ## 설정
@@ -46,7 +58,7 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]" -e client
 | `BACKUP_KEEP` | `3` | 일일 gzip 백업 보관 개수 (0 이면 백업 안 함) |
 | `DART_API_KEY` | | OpenDART 인증키. 없으면 DART 소스와 한국 사전 갱신을 건너뜀 |
 | `EDGAR_USER_AGENT` | | SEC 요구 User-Agent (`"이름 email@example.com"`). 없으면 EDGAR 소스와 미국 사전 갱신을 건너뜀 |
-| `API_TOKEN` | | 설정하면 쓰기 요청에 토큰 필요 |
+| `API_TOKEN` | | 설정하면 쓰기 요청에 토큰 필요 (LAN 공개 시 권장) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | | 상태 이상·복구 경보 |
 | `MAX_CONCURRENT_FETCHES` | `4` | 동시 수집 수 |
 | `REFRESH_COOLDOWN_SEC` | `300` | 종목별 즉시 수집(`refresh=true`) 쿨다운 |
@@ -99,9 +111,25 @@ Yahoo 종목 뉴스(미국), Google 뉴스 종목 검색(한국, 기본 비활�
 | `GET/PATCH /v1/sources` · `POST /v1/sources/{key}/refresh` | 소스 상태 · 토글 · 즉시 수집 |
 | `PUT/GET/DELETE /v1/watchlists/{client}` | 종목별 수집 대상 |
 | `GET /v1/symbols/search` · `PUT /v1/symbols/{m}/{s}/aliases` | 심볼 사전 |
-| `GET /health` · `GET /v1/stats` | 상태 · 수집량·용량 통계 |
+| `POST /v1/tagging/preview` | 텍스트에 태깅 규칙 적용 결과 (저장 안 함) |
+| `GET /v1/fetch-log` | 수집 이력 |
+| `GET /health` · `GET /v1/stats` | 상태 · 수집량·용량 통계·용량 예측 |
 
 상세: [docs/API.md](docs/API.md), 실행 중 `http://127.0.0.1:5200/docs`.
+
+---
+
+## 운영 콘솔
+
+브라우저로 `http://<서버>:5200/` 을 연다. 조회는 누구나, 켜기/끄기·즉시 수집·별칭 저장은 API 토큰이 필요하다
+(우측 상단 🔑 — 브라우저에만 저장).
+
+| 탭 | 내용 |
+|---|---|
+| 소스 상태 | 소스별 상태(정상·지연·재시도·실패·미설정·꺼짐), 마지막 성공·신규, 24시간·누적 건수, 다음 수집, 켜기/끄기, 즉시 수집, 최근 수집 이력과 오류 |
+| 조회 테스터 | `/v1/headlines` 조건 폼. 결과마다 매칭 경로(태그/텍스트)·종목 태그 근거·주제·실린 피드, 실제 검색 키워드, 요청 URL 복사 |
+| 수집량·용량 | 보관 기사 수, DB·백업 크기, 일평균 신규, 보관 기간이 찼을 때 예상 용량, 일별·소스별 유입 |
+| 태깅·별칭 | 텍스트를 넣어 종목·주제 태깅 결과 미리보기, 심볼 사전 검색, 별칭 편집 |
 
 ---
 
@@ -149,7 +177,7 @@ with SyncNewsClient(client="script") as nc:
 ## 디렉터리
 
 ```
-newsserver/          서버 패키지 (collectors/, api/, storage/, pipeline, query, scheduler, symbols, topics …)
+newsserver/          서버 패키지 (collectors/, api/, storage/, web/, pipeline, query, scheduler, symbols, topics …)
 client/newsclient/   클라이언트 패키지
 config/              sources.yaml, topics.yaml, symbols/
 docs/                DESIGN.md, API.md

@@ -44,6 +44,8 @@ def test_build_search_terms():
     terms = build_search_terms("5930", "KR", ["삼성전자(주)"])
     assert "005930" in terms and "삼성전자" in terms
     assert all(len(t) > 1 for t in terms)
+    terms = build_search_terms("005930", "KR", ["SAMSUNG ELECTRONICS CO,.LTD"])
+    assert "SAMSUNG ELECTRONICS" in terms and not any("," in t for t in terms)
 
 
 def test_extract_ticker_tags():

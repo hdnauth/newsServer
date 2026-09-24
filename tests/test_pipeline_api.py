@@ -204,3 +204,73 @@ async def test_health_and_stats(app_ctx):
     assert stats["articles"]["total"] == 9
     assert stats["storage"]["db_bytes"] > 0
     assert stats["clients"]["tester"] >= 1
+
+
+async def test_console_page_and_health_auth_flag(app_ctx):
+    client, svc = app_ctx
+    page = await client.get("/")
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"]
+    assert "NewsServer" in page.text and ".innerHTML" not in page.text  # 외부 텍스트는 DOM API 로만 렌더링
+    assert (await client.get("/health")).json()["auth_required"] is False
+    svc.settings.api_token = "t"
+    assert (await client.get("/health")).json()["auth_required"] is True
+
+
+async def test_tagging_preview(app_ctx):
+    client, _ = app_ctx
+    body = (await client.post("/v1/tagging/preview", json={
+        "title": "삼성전자, 엔비디아에 HBM 공급", "summary": "$NVDA 주가와 원/달러 환율"})).json()
+    got = {(s["symbol"], s["method"]) for s in body["symbols"]}
+    assert ("005930", "dict") in got and ("NVDA", "ref") in got
+    assert next(s for s in body["symbols"] if s["symbol"] == "005930")["name"] == "삼성전자"
+    assert {"semiconductor", "fx"} <= {t["key"] for t in body["topics"]}
+
+
+async def test_fetch_log_endpoint(app_ctx):
+    client, svc = app_ctx
+    async with svc.db.write() as conn:
+        await conn.executemany(
+            "INSERT INTO fetch_log(source_key, started_at, n_items, n_new, error) VALUES (?, ?, ?, ?, ?)",
+            [("yonhap_market", "2026-09-24T00:00:00Z", 30, 5, None),
+             ("yonhap_market", "2026-09-24T00:03:00Z", 3, 0, "HTTP 503"),
+             ("dart", "2026-09-24T00:04:00Z", 10, 10, None)])
+    rows = (await client.get("/v1/fetch-log", params={"source": "yonhap_market"})).json()
+    assert [r["n_items"] for r in rows] == [3, 30]  # 최신순
+    assert [r["maybe_missed"] for r in rows] == [False, False]  # 상한 도달했지만 신규 5건뿐
+    async with svc.db.write() as conn:
+        await conn.execute("INSERT INTO fetch_log(source_key, started_at, n_items, n_new) "
+                           "VALUES ('yonhap_market', '2026-09-24T00:06:00Z', 30, 30)")
+    rows = (await client.get("/v1/fetch-log", params={"source": "yonhap_market", "limit": 1})).json()
+    assert rows[0]["maybe_missed"] is True  # 상한까지 전부 신규
+    errs = (await client.get("/v1/fetch-log", params={"errors_only": True})).json()
+    assert [r["error"] for r in errs] == ["HTTP 503"]
+
+
+async def _set_collected(svc, days_ago: float, n: int, source: str) -> None:
+    from newsserver.timeutil import to_iso
+    ts = to_iso(utcnow() - dt.timedelta(days=days_ago))
+    async with svc.db.write() as conn:
+        for i in range(n):
+            url = f"https://proj.test/{source}/{days_ago}/{i}"
+            await conn.execute(
+                "INSERT INTO articles(url, url_key, title, body_kind, source_key, market, lang, collected_at, ts, title_key) "
+                "VALUES (?, ?, 't', 'summary', ?, 'KR', 'ko', ?, ?, 'k')", (url, url, source, ts, ts))
+
+
+async def test_stats_projection(app_ctx):
+    client, svc = app_ctx
+    assert (await client.get("/v1/stats")).json()["projection"]["ready"] is False
+    # 방금 첫 수집 — 과거 기사 일괄 수신 구간이라 추정하지 않는다
+    await seed(svc)
+    p = (await client.get("/v1/stats")).json()["projection"]
+    assert p["ready"] is False and p["ready_at"]
+
+    # 3일 전 첫 수집(과거분 500건, 워밍업이라 제외) 이후 하루 100건씩
+    await _set_collected(svc, 3.0, 500, "yonhap_market")
+    for d in (2.5, 1.5, 0.5):
+        await _set_collected(svc, d, 100, "yonhap_market")
+    p = (await client.get("/v1/stats", params={"days": 14})).json()["projection"]
+    assert p["ready"] and p["bytes_basis"] == "reference"
+    # 관측 구간(첫 수집+6시간 ~ 현재, 2.75일)에 300건 + 방금 seed 9건
+    assert 105 <= p["articles_per_day"] <= 115
+    assert abs(p["projected_db_bytes"] - p["projected_articles"] * p["bytes_per_article"]) <= p["bytes_per_article"]

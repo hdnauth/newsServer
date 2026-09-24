@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from newsserver.api.deps import require_token, services
 from newsserver.api.schemas import SourcePatch, SourceStatus
@@ -41,6 +41,33 @@ def _status(svc, key: str, totals: dict, recent: dict) -> dict:
 async def list_sources(svc=Depends(services)) -> list[dict]:
     totals, recent = await _counts(svc)
     return [_status(svc, key, totals, recent) for key in svc.specs]
+
+
+@router.get("/fetch-log")
+async def fetch_log(source: str | None = None, limit: int = Query(50, ge=1, le=500),
+                    errors_only: bool = False, svc=Depends(services)) -> list[dict]:
+    """최근 수집 이력 (최신순).
+
+    ``maybe_missed``: 받은 건수가 소스의 max_entries 에 닿았고 그 전부가 신규였던 수집 —
+    폴링 간격 사이에 상한보다 많이 발행돼 일부를 놓쳤을 수 있다.
+    """
+    where, params = [], []
+    if source:
+        where.append("source_key = ?")
+        params.append(source)
+    if errors_only:
+        where.append("error IS NOT NULL")
+    sql = ("SELECT source_key, target, started_at, duration_ms, http_status, n_items, n_new, error FROM fetch_log"
+           + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?")
+    async with svc.db.read() as conn:
+        cur = await conn.execute(sql, (*params, limit))
+        rows = await cur.fetchall()
+    out = []
+    for r in rows:
+        spec = svc.specs.get(r["source_key"])
+        at_cap = bool(spec and r["n_items"] >= spec.max_entries)
+        out.append({**dict(r), "maybe_missed": at_cap and r["n_new"] >= r["n_items"]})
+    return out
 
 
 @router.patch("/sources/{key}", response_model=SourceStatus, dependencies=[Depends(require_token)])

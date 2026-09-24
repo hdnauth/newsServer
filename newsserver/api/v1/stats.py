@@ -6,7 +6,7 @@ import datetime as dt
 from fastapi import APIRouter, Depends, Query
 
 from newsserver.api.deps import services
-from newsserver.timeutil import to_iso, utcnow
+from newsserver.timeutil import parse_iso, to_iso, utcnow
 
 router = APIRouter(tags=["stats"])
 
@@ -48,9 +48,63 @@ async def stats(days: int = Query(14, ge=1, le=90), svc=Depends(services)) -> di
     full_days = [d["articles"] for d in per_day[:-1]] if len(per_day) > 1 else []
     avg_per_day = round(sum(full_days) / len(full_days)) if full_days else None
     return {
+        "projection": await _projection(svc, first_collected, days, total, bytes_per_article),
         "articles": {"total": total, "oldest_ts": oldest_ts, "newest_ts": newest_ts,
                      "first_collected_at": first_collected},
         "storage": {**sizes, "free_bytes": free_pages * page_size, "bytes_per_article": bytes_per_article},
         "intake": {"days": days, "avg_per_day": avg_per_day, "per_day": per_day, "per_source": per_source},
         "clients": dict(svc.client_requests),
+    }
+
+
+# 기사가 적을 때는 페이지·인덱스 고정 비용 때문에 기사당 바이트가 과대 측정된다.
+# 그 구간에서는 1년 규모 모의 DB 실측값(docs/DESIGN.md §8)을 쓴다.
+REFERENCE_BYTES_PER_ARTICLE = 1700
+MEASURED_MIN_ARTICLES = 50_000
+BACKUP_COMPRESSION = 0.35
+WARMUP = dt.timedelta(hours=6)
+MIN_OBSERVED = dt.timedelta(days=1)
+
+
+async def _projection(svc, first_collected: str | None, days: int, total: int,
+                      bytes_per_article: int | None) -> dict:
+    """현재 유입 속도가 이어질 때 보관 기간이 다 찼을 때의 기사 수·용량 추정.
+
+    첫 수집 직후에는 각 피드가 쌓아 둔 과거 기사를 한꺼번에 받으므로 유입 속도가 부풀려진다.
+    첫 수집 후 ``WARMUP`` 동안은 관측에서 빼고, 관측이 ``MIN_OBSERVED`` 이상일 때만 추정한다.
+    """
+    first = parse_iso(first_collected)
+    if first is None:
+        return {"ready": False, "reason": "수집된 기사 없음"}
+    now = utcnow()
+    since = max(first + WARMUP, now - dt.timedelta(days=days))
+    span = now - since
+    if span < MIN_OBSERVED:
+        ready_at = first + WARMUP + MIN_OBSERVED
+        return {"ready": False, "reason": "관측 기간 부족", "ready_at": to_iso(ready_at)}
+
+    async with svc.db.read() as conn:
+        cur = await conn.execute(
+            "SELECT source_key, COUNT(*) FROM articles WHERE collected_at >= ? GROUP BY source_key", (to_iso(since),))
+        per_source = {r[0]: r[1] for r in await cur.fetchall()}
+    span_days = span.total_seconds() / 86400
+    projected = 0.0
+    for key, n in per_source.items():
+        spec = svc.specs.get(key)
+        retention = spec.retention_days if spec and spec.retention_days else svc.settings.default_retention_days
+        projected += n / span_days * retention
+    measured = total >= MEASURED_MIN_ARTICLES and bytes_per_article
+    bpa = bytes_per_article if measured else REFERENCE_BYTES_PER_ARTICLE
+    db_bytes = projected * bpa
+    return {
+        "ready": True,
+        "observed_since": to_iso(since),
+        "observed_days": round(span_days, 2),
+        "articles_per_day": round(sum(per_source.values()) / span_days),
+        "default_retention_days": svc.settings.default_retention_days,
+        "projected_articles": round(projected),
+        "bytes_per_article": bpa,
+        "bytes_basis": "measured" if measured else "reference",
+        "projected_db_bytes": round(db_bytes),
+        "projected_backups_bytes": round(db_bytes * BACKUP_COMPRESSION * max(svc.settings.backup_keep, 0)),
     }

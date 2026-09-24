@@ -5,6 +5,7 @@
 - `X-Client: <이름>` 헤더를 보내면 `/v1/stats` 에 클라이언트별 요청 수가 집계된다 (선택)
 - `API_TOKEN` 이 설정돼 있으면 쓰기 요청(PATCH·POST·PUT·DELETE, 조회용 `POST /v1/headlines/by-symbols` 제외)에
   `Authorization: Bearer <토큰>` 또는 `X-API-Token: <토큰>` 이 필요하다
+- 운영 콘솔은 `GET /` (HTML)
 - `market` 은 `KR` | `US` | `GLOBAL`. `KRX`·`KOSPI`·`KOSDAQ`·`NYSE`·`NASDAQ` 등 별칭도 받는다
 - 목록 파라미터는 콤마 구분(`topics=bond,fx`)과 반복(`topics=bond&topics=fx`) 모두 된다
 
@@ -161,18 +162,51 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 
 ---
 
+## 태깅 미리보기
+
+### `POST /v1/tagging/preview`
+
+임의의 텍스트에 수집 시점의 사전 태깅(`dict`·`ref`)과 주제 규칙을 적용한 결과. 저장하지 않는다.
+별칭·제외어를 조정할 때 확인용으로 쓴다. 소스 태그·공시 코드처럼 수집기가 붙이는 태그는 나오지 않는다.
+
+```json
+{"title": "삼성전자, 엔비디아에 HBM 공급", "summary": "$NVDA 주가"}
+```
+→
+```json
+{"symbols": [{"market": "KR", "symbol": "005930", "method": "dict", "name": "삼성전자"},
+             {"market": "US", "symbol": "NVDA", "method": "ref", "name": "NVIDIA CORP"}],
+ "topics": [{"key": "semiconductor", "label": "반도체"}]}
+```
+
+---
+
+## 수집 이력
+
+### `GET /v1/fetch-log?source=&limit=50&errors_only=false`
+
+최근 수집 기록 (최신순, 7일 보관): `source_key`, `target`(종목별 소스일 때 `KR:005930`), `started_at`,
+`duration_ms`, `http_status`, `n_items`(받은 건수), `n_new`, `error`, `maybe_missed`.
+`maybe_missed` 는 받은 건수가 소스의 `max_entries` 에 닿았고 전부 신규였던 수집이다 — 폴링 간격 사이에
+상한보다 많이 발행돼 일부를 놓쳤을 수 있다.
+
+---
+
 ## 상태·통계
 
 ### `GET /health`
 
 ```json
-{"version": "0.1.0", "status": "ok", "problems": [], "sources_active": 23,
+{"version": "0.1.0", "auth_required": true, "status": "ok", "problems": [], "sources_active": 23,
  "sources_failing": [], "sources_stale": []}
 ```
 
-`status` 는 `ok` | `degraded`. HTTP 상태 코드는 항상 200.
+`status` 는 `ok` | `degraded`. HTTP 상태 코드는 항상 200. `auth_required` 는 쓰기 요청에 토큰이 필요한지.
 
 ### `GET /v1/stats?days=14`
 
-기사 총수·가장 오래된/최신 시각, DB·WAL·백업 크기, 기사당 바이트, 일별·소스별 유입량, 클라이언트별 요청 수.
-보관 기간 판단에 쓴다.
+기사 총수·가장 오래된/최신 시각, DB·WAL·백업 크기, 기사당 바이트, 일별·소스별 유입량, 클라이언트별 요청 수,
+그리고 `projection` — 소스별 현재 유입 속도 × 소스별 보관 기간으로 계산한, 보관 기간이 다 찼을 때의 기사 수와
+DB·백업 용량 추정치. 첫 수집 직후 6시간(피드에 쌓여 있던 과거 기사를 한꺼번에 받는 구간)은 관측에서 빼고,
+관측이 1일 이상일 때만 `ready: true` 다. 기사가 5만 건 미만이면 기사당 크기로 1년 규모 실측 기준값(1,700 B)을 쓴다
+(`bytes_basis: reference`).
