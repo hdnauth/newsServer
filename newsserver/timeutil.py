@@ -43,6 +43,9 @@ def parse_iso(value: str | None) -> dt.datetime | None:
 
 
 _TZ_SUFFIX_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2}|\b[A-Z]{2,5})\s*$")
+# RFC 822 오프셋에 콜론을 넣는 피드(매일경제 "+09:00")가 있다. parsedate_to_datetime 은
+# 이를 오프셋으로 읽지 못해 naive 로 돌려주므로 "+0900" 으로 바꿔서 넘긴다.
+_COLON_OFFSET_RE = re.compile(r"([+-]\d{2}):(\d{2})\s*$")
 
 
 def parse_feed_datetime(raw: str | None, parsed_struct=None, naive_tz: str = "UTC") -> dt.datetime | None:
@@ -59,7 +62,7 @@ def parse_feed_datetime(raw: str | None, parsed_struct=None, naive_tz: str = "UT
     if text:
         value: dt.datetime | None = None
         try:
-            value = parsedate_to_datetime(text)
+            value = parsedate_to_datetime(_COLON_OFFSET_RE.sub(r"\1\2", text))
         except (TypeError, ValueError, IndexError):
             value = None
         if value is None:
