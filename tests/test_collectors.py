@@ -150,15 +150,65 @@ async def test_dart_no_data_and_error(settings):
             await DartCollector(s, settings, http).fetch()
 
 
-async def test_yahoo_symbol(settings):
-    payload = {"news": [
-        {"title": "Nvidia beats", "link": "https://finance.yahoo.com/n/1", "publisher": "Reuters",
-         "providerPublishTime": 1790240000, "relatedTickers": ["NVDA", "005930.KS", "^GSPC", "BRK.B"]},
-        {"title": "", "link": "https://x"},
-    ]}
-    async with client_for(lambda req: httpx.Response(200, content=json.dumps(payload))) as http:
+YAHOO_SEARCH_PAYLOAD = {"news": [
+    {"title": "Nvidia beats", "link": "https://finance.yahoo.com/n/1", "publisher": "Reuters",
+     "providerPublishTime": 1790240000, "relatedTickers": ["NVDA", "005930.KS", "^GSPC", "BRK.B"]},
+    {"title": "", "link": "https://x"},
+]}
+
+
+def yahoo_handler(stream_response: httpx.Response, calls: list[str]):
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.path)
+        if req.url.path == "/xhr/ncp":
+            return stream_response
+        return httpx.Response(200, content=json.dumps(YAHOO_SEARCH_PAYLOAD))
+    return handler
+
+
+async def fetch_yahoo(settings, stream_response: httpx.Response, symbol="NVDA"):
+    calls: list[str] = []
+    async with client_for(yahoo_handler(stream_response, calls)) as http:
         s = spec(kind="yahoo_symbol", market="US", per_symbol=True)
-        items = (await YahooSymbolCollector(s, settings, http).fetch_symbol(SymbolTarget("US", "NVDA"))).items
-    assert len(items) == 1
+        result = await YahooSymbolCollector(s, settings, http).fetch_symbol(SymbolTarget("US", symbol))
+    return result.items, calls
+
+
+async def test_yahoo_symbol_stream_with_summary(settings):
+    stream = {"data": {"tickerStream": {"stream": [
+        {"id": "1", "content": {
+            "title": "Nvidia beats", "summary": "", "description": "<p>Revenue &amp; margin <b>up</b></p>",
+            "pubDate": "2026-09-23T19:50:58Z", "contentType": "STORY",
+            "canonicalUrl": {"url": "https://www.fool.com/n/1"},
+            "clickThroughUrl": {"url": "https://finance.yahoo.com/n/1"},
+            "provider": {"displayName": "Motley Fool"}}},
+        {"id": "2", "ad": [{"x": 1}], "content": {"title": "Ad", "clickThroughUrl": {"url": "https://ad"}}},
+        {"id": "3", "content": {"title": "Only canonical", "summary": "S",
+                                "canonicalUrl": {"url": "https://finance.yahoo.com/n/3"}}},
+    ]}}}
+    items, calls = await fetch_yahoo(settings, httpx.Response(200, content=json.dumps(stream)))
+    assert calls == ["/xhr/ncp"]
+    assert [i.url for i in items] == ["https://finance.yahoo.com/n/1", "https://finance.yahoo.com/n/3"]
+    assert items[0].summary == "Revenue & margin up"
+    assert items[0].published_at == dt.datetime(2026, 9, 23, 19, 50, 58, tzinfo=UTC)
+    assert items[0].extra["publisher"] == "Motley Fool"
+    assert items[0].symbols == []  # 대상 종목 태그는 파이프라인이 붙인다
+
+
+async def test_yahoo_symbol_empty_stream_does_not_fall_back(settings):
+    empty = {"data": {"tickerStream": {"stream": []}}, "status": "OK"}
+    items, calls = await fetch_yahoo(settings, httpx.Response(200, content=json.dumps(empty)), "ZZZZQ")
+    assert items == [] and calls == ["/xhr/ncp"]
+
+
+@pytest.mark.parametrize("stream_response", [
+    httpx.Response(429, content=b"Too Many Requests"),
+    httpx.Response(200, content=b"<html>Will be right back</html>"),
+    httpx.Response(200, content=json.dumps({"data": {"somethingElse": {}}})),
+])
+async def test_yahoo_symbol_falls_back_to_search(settings, stream_response):
+    items, calls = await fetch_yahoo(settings, stream_response)
+    assert calls == ["/xhr/ncp", "/v1/finance/search"]
+    assert len(items) == 1 and items[0].summary == ""
     assert {(t.market, t.symbol) for t in items[0].symbols} == {("US", "NVDA"), ("KR", "005930"), ("US", "BRK-B")}
     assert items[0].published_at == dt.datetime.fromtimestamp(1790240000, UTC)
