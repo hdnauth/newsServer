@@ -76,7 +76,7 @@ API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없
 
 | 필드 | 설명 |
 |---|---|
-| `kind` | `rss` · `rss_search`(종목별 검색 피드, url 에 `{query}`) · `dart` · `edgar` · `yahoo_symbol` |
+| `kind` | `rss` · `rss_search`(종목별 검색 피드, url 에 `{query}`) · `dart` · `edgar` · `yahoo_symbol`(종목 뉴스 스트림, 요약 포함) |
 | `market` | `KR` · `US` · `GLOBAL` — 종목 텍스트 매칭 시 같은 시장 소스로 제한할 때 쓴다 |
 | `body_kind` | `summary` · `title_only` · `metadata` |
 | `schedule` | `market_aware`(시장 시간에 따라 180s/30m/60m) · `fixed`(`interval_sec`) |
@@ -87,7 +87,7 @@ API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없
 | `options` | 수집기별 옵션 — 각 `collectors/*.py` 상단 설명 참고 |
 
 편집 후 서버를 재시작하면 반영된다. 기본 구성: 한국·미국 금융 RSS 16종, 일반 뉴스 5종, DART, EDGAR 8-K,
-Yahoo 종목 뉴스(미국), Google 뉴스 종목 검색(한국, 기본 비활성).
+Yahoo 종목 뉴스(미국, 요약 포함), Google 뉴스 종목 검색(한국, 기본 비활성).
 
 ### 주제 — `config/topics.yaml`
 
