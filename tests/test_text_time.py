@@ -13,6 +13,15 @@ def test_parse_rfc822_with_offset():
     assert got == dt.datetime(2026, 9, 24, 9, 9, 59, tzinfo=UTC)
 
 
+def test_parse_rfc822_with_colon_offset():
+    # 매일경제는 오프셋에 콜론을 넣는다 — UTC 로 읽으면 9시간 미래가 되어 버려진다
+    got = parse_feed_datetime("Thu, 24 Sep 2026 18:09:59 +09:00")
+    assert got == dt.datetime(2026, 9, 24, 9, 9, 59, tzinfo=UTC)
+    assert parse_feed_datetime("Thu, 24 Sep 2026 10:01:00 -00:00", naive_tz="Asia/Seoul") == \
+        dt.datetime(2026, 9, 24, 10, 1, tzinfo=UTC)
+    assert parse_feed_datetime("2026-09-24T18:09:59+09:00") == dt.datetime(2026, 9, 24, 9, 9, 59, tzinfo=UTC)
+
+
 def test_parse_naive_uses_source_timezone():
     # 타임존 표기 없는 현지 시각 — 소스 설정 시간대로 해석해야 한다
     got = parse_feed_datetime("2026-09-24 18:18:41", naive_tz="Asia/Seoul")
