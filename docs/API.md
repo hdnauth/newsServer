@@ -39,7 +39,7 @@
 | `market_filter` | `true` | 종목 텍스트 매칭을 같은 시장 소스로 제한 |
 | `time_basis` | `ts` | 시간 조건·정렬 기준 `ts`(발행, 없으면 수집) \| `collected` |
 | `dedup` | `none` | `title` 이면 제목이 같은 교차 소스 기사를 한 건으로 |
-| `refresh` | `false` | 종목 조회 전에 종목별 소스를 즉시 수집 (소스·종목마다 `REFRESH_COOLDOWN_SEC` 쿨다운) |
+| `refresh` | `false` | 종목 조회 전에 종목별 소스를 즉시 수집 (소스·종목마다 `REFRESH_COOLDOWN_SEC` 쿨다운). 원격 요청은 소스마다 `request_gap_sec` 간격으로 한 건씩 나가므로 몰리면 `timeout` 으로 먼저 응답하고 수집은 계속된다. 관심종목으로 등록한 종목은 주기 수집되므로 `refresh` 가 필요 없다 |
 
 응답
 

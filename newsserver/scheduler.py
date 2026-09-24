@@ -3,8 +3,10 @@
 * 전역 소스: 소스마다 ``next_poll_at`` 을 두고 도래한 것만 실행한다.
   주기 = max(기본 주기, 무수집 백오프, 실패 백오프). 기본 주기는 ``fixed`` 면 interval_sec,
   ``market_aware`` 면 해당 시장의 정규장/확장 거래/휴장 여부에 따라 달라진다.
-* 종목별 소스: 관심종목(watchlist) 합집합을 대상으로 소스마다 한 번에 한 종목씩,
-  요청 간격(request_gap_sec)을 두고 순회한다.
+* 종목별 소스: 관심종목(watchlist) 합집합을 대상으로 소스마다 한 번에 한 종목씩 순회한다.
+  요청 간격(request_gap_sec)은 즉시 수집(refresh)까지 포함해 소스 단위로 지킨다 — 소비자가
+  여러 종목을 연달아 즉시 수집해도 원격에는 간격을 두고 한 건씩 나간다. 같은 종목의 수집이
+  진행 중이면 새로 요청하지 않고 그 결과를 함께 기다린다.
 * 유지보수: 매일 정해진 시각에 보관 기간 정리·수집 이력 정리·백업, 주기적으로 심볼 사전 갱신.
 * 상태 감시: 전 소스 연속 실패·스케줄러 정지를 ``degraded`` 로 보고하고 전환 시 경보.
 """
@@ -13,9 +15,11 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import gzip
+import math
 import json
 import shutil
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -116,6 +120,9 @@ class Scheduler:
         self.symbol_state: dict[tuple[str, str, str], SymbolState] = {}
         self._running: set[str] = set()
         self._sem = asyncio.Semaphore(settings.max_concurrent_fetches)
+        self._symbol_gates: dict[str, asyncio.Lock] = {}
+        self._symbol_last_request: dict[str, float] = {}
+        self._symbol_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
         self._tasks: list[asyncio.Task] = []
         self._last_tick: float = 0.0
         self._targets: list[SymbolTarget] = []
@@ -315,7 +322,6 @@ class Scheduler:
         return not spec.symbol_markets or market in spec.symbol_markets
 
     async def _symbol_loop(self, spec: SourceSpec) -> None:
-        gap = float(spec.options.get("request_gap_sec", 2.0))
         while True:
             try:
                 if not self.is_enabled(spec.key) or self.missing_config(spec.key):
@@ -335,8 +341,7 @@ class Scheduler:
                     if due_at is None or at < due_at:
                         due, due_at = target, at
                 if due is not None and (due_at is None or due_at <= now):
-                    await self._run_symbol(spec, due)
-                    await asyncio.sleep(gap)
+                    await self._symbol_job(spec, due)  # 간격은 _paced 가 지킨다
                 else:
                     await asyncio.sleep(5)
             except asyncio.CancelledError:
@@ -344,6 +349,31 @@ class Scheduler:
             except Exception as e:  # noqa: BLE001
                 logger.exception("종목별 수집 루프 오류 ({}): {}", spec.key, e)
                 await asyncio.sleep(30)
+
+    @asynccontextmanager
+    async def _paced(self, spec: SourceSpec):
+        """종목별 소스의 원격 요청을 소스마다 한 줄로 세우고 request_gap_sec 간격을 둔다."""
+        gap = float(spec.options.get("request_gap_sec", 2.0))
+        async with self._symbol_gates.setdefault(spec.key, asyncio.Lock()):
+            wait = self._symbol_last_request.get(spec.key, -math.inf) + gap - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                yield
+            finally:
+                self._symbol_last_request[spec.key] = time.monotonic()
+
+    def _symbol_job(self, spec: SourceSpec, target: SymbolTarget) -> asyncio.Task:
+        """종목 수집 작업. 같은 소스·종목이 이미 수집 중이면 그 작업을 돌려준다."""
+        key = (spec.key, target.market, target.symbol)
+        task = self._symbol_inflight.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(self._run_symbol(spec, target),
+                                       name=f"fetch:{spec.key}:{target.market}:{target.symbol}")
+            self._symbol_inflight[key] = task
+            task.add_done_callback(
+                lambda t: self._symbol_inflight.pop(key) if self._symbol_inflight.get(key) is t else None)
+        return task
 
     async def _run_symbol(self, spec: SourceSpec, target: SymbolTarget) -> IngestStats | None:
         state_key = (spec.key, target.market, target.symbol)
@@ -354,8 +384,10 @@ class Scheduler:
         error = None
         status = None
         try:
-            async with self._sem:
-                result = await self.collectors[spec.key].fetch_symbol(target)
+            async with self._paced(spec):
+                started, t0 = utcnow(), time.monotonic()  # 대기 시간은 수집 시간에서 뺀다
+                async with self._sem:
+                    result = await self.collectors[spec.key].fetch_symbol(target)
             status = result.http_status
             stats = await self.ingestor.ingest(spec, result.items, target=target)
         except asyncio.CancelledError:
@@ -406,7 +438,7 @@ class Scheduler:
             if last and (now - last).total_seconds() < self.settings.refresh_cooldown_sec:
                 outcome[spec.key] = "cooldown"
                 continue
-            jobs[spec.key] = asyncio.create_task(self._run_symbol(spec, target))
+            jobs[spec.key] = self._symbol_job(spec, target)
         if jobs:
             done, pending = await asyncio.wait(jobs.values(), timeout=timeout)
             for key, task in jobs.items():
