@@ -55,6 +55,7 @@ async def stats(days: int = Query(14, ge=1, le=90), svc=Depends(services)) -> di
         "storage": {**sizes, "free_bytes": free_pages * page_size, "bytes_per_article": bytes_per_article},
         "intake": {"days": days, "avg_per_day": avg_per_day, "per_day": per_day, "per_source": per_source},
         "clients": dict(svc.client_requests),
+        "financials_cache": svc.financials.cache.stats(),
     }
 
 

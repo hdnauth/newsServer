@@ -10,8 +10,15 @@ from newsserver.config import Settings
 from newsserver.financials.cache import MemoryCache
 from newsserver.financials.dart import DartFinancials
 from newsserver.financials.model import NotFound
+from newsserver.financials.sec import SecFinancials
 from newsserver.symbols import SymbolDirectory
 from newsserver.timeutil import to_iso, utcnow
+
+
+EMPTY_NOTE = {
+    "dart": "DART 에 이 기간의 재무제표가 없습니다 (상장 전·비상장 법인 등)",
+    "sec": "SEC 에 us-gaap 재무 사실이 없습니다 (20-F·40-F 를 내는 외국 기업 등)",
+}
 
 
 class FinancialsService:
@@ -20,6 +27,7 @@ class FinancialsService:
         self.directory = directory
         self.cache = MemoryCache(settings.financials_cache_ttl_sec, settings.financials_cache_max_entries)
         self.dart = DartFinancials(settings, http, self.cache)
+        self.sec = SecFinancials(settings, http, self.cache)
 
     async def get(self, market: str, symbol: str, *, period: str = "quarter", limit: int = 8,
                   basis: str = "consolidated", raw: bool = False, today: dt.date | None = None) -> dict[str, Any]:
@@ -33,9 +41,15 @@ class FinancialsService:
                                                         basis=basis, raw=raw, today=today)
             source, source_id = "dart", entry.corp_code
         else:
-            raise NotFound(f"재무제표를 지원하지 않는 시장입니다: {market}")
-        return {
+            if not entry.cik:
+                raise NotFound(f"SEC CIK 가 없는 종목입니다: {symbol}")
+            periods, currency = await self.sec.periods(int(entry.cik), period=period, limit=limit, raw=raw)
+            source, source_id = "sec", entry.cik
+        out = {
             "market": market, "symbol": symbol, "name": entry.name, "source": source, "source_id": source_id,
             "currency": currency, "period": period, "basis": basis,
             "periods": [p.to_dict() for p in periods], "fetched_at": to_iso(utcnow()),
         }
+        if not periods:
+            out["note"] = EMPTY_NOTE[source]
+        return out

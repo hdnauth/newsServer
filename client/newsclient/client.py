@@ -175,6 +175,23 @@ class NewsClient(_Base):
         except (httpx.HTTPError, ValueError) as e:
             return self._fail("watchlist", e, False)
 
+    # ── 재무제표 (서버는 저장하지 않고 원천에서 읽는다) ─────────────────────
+    async def financials(self, market: str, symbol: str, *, period: str = "quarter", limit: int = 8,
+                         basis: str | None = None, raw: bool = False) -> dict[str, Any] | None:
+        """정규화된 재무제표. 실패하면 None — 데이터가 없는 것(``periods: []``)과 구분한다."""
+        try:
+            return await self._request("GET", f"/v1/financials/{market}/{symbol}",
+                                       params=_params(period=period, limit=limit, basis=basis, raw=raw or None))
+        except (httpx.HTTPError, ValueError) as e:
+            return self._fail("financials", e, None)
+
+    async def financial_items(self) -> list[dict[str, Any]]:
+        """정규화 항목 정의 (key, label, statement, kind, description)."""
+        try:
+            return (await self._request("GET", "/v1/financials/items"))["items"]
+        except (httpx.HTTPError, ValueError) as e:
+            return self._fail("financials/items", e, [])
+
     async def health(self) -> dict[str, Any]:
         try:
             return await self._request("GET", "/health")
@@ -222,3 +239,14 @@ class SyncNewsClient(_Base):
     def since(self, cursor: int, *, limit: int = 500, **filters: Any) -> tuple[list[Headline], int]:
         page = self.headlines_page(since_id=cursor, limit=limit, **filters)
         return page.items, page.next_since_id if page.next_since_id is not None else cursor
+
+    def financials(self, market: str, symbol: str, *, period: str = "quarter", limit: int = 8,
+                   basis: str | None = None, raw: bool = False) -> dict[str, Any] | None:
+        """정규화된 재무제표. 실패하면 None — 데이터가 없는 것(``periods: []``)과 구분한다."""
+        try:
+            resp = self._http.get(f"/v1/financials/{market}/{symbol}",
+                                  params=_params(period=period, limit=limit, basis=basis, raw=raw or None))
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.HTTPError, ValueError) as e:
+            return self._fail("financials", e, None)

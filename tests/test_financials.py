@@ -187,3 +187,119 @@ async def test_api_endpoints(app_ctx):
     assert r.status_code == 200 and body["periods"] and body["periods"][0]["fiscal_quarter"] is None
     assert (await client.get("/v1/financials/US/AAPL", params={"basis": "separate"})).status_code == 422
     assert (await client.get("/v1/financials/GLOBAL/X")).status_code == 422
+
+
+# ── 미국 (SEC companyfacts) ──────────────────────────────────────────────────
+SEC_FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "financials_sec.json").read_text())
+AAPL, NVDA, JPM = 320193, 1045810, 19617
+
+
+class SecReplay:
+    def __init__(self, status: int | None = None, drop_tags: tuple[str, ...] = ()):
+        self.calls: list[str] = []
+        self.status = status
+        self.drop_tags = drop_tags
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.path)
+        assert request.headers["User-Agent"] == "Tester test@example.com"
+        if self.status:
+            return httpx.Response(self.status)
+        cik = str(int(request.url.path.rsplit("CIK", 1)[1].removesuffix(".json")))
+        doc = SEC_FIXTURE.get(cik)
+        if doc is None:
+            return httpx.Response(404)
+        doc = json.loads(json.dumps(doc))
+        for tag in self.drop_tags:
+            doc["facts"]["us-gaap"].pop(tag, None)
+        return httpx.Response(200, json=doc)
+
+
+def make_us_service(replay: SecReplay, *, ua: str = "Tester test@example.com") -> FinancialsService:
+    settings = Settings(_env_file=None, edgar_user_agent=ua)
+    d = SymbolDirectory()
+    d._rebuild({
+        ("US", "AAPL"): SymbolEntry("US", "AAPL", "Apple Inc.", cik=str(AAPL)),
+        ("US", "NVDA"): SymbolEntry("US", "NVDA", "NVIDIA CORP", cik=str(NVDA)),
+        ("US", "JPM"): SymbolEntry("US", "JPM", "JPMORGAN CHASE & CO", cik=str(JPM)),
+        ("US", "TSM"): SymbolEntry("US", "TSM", "TAIWAN SEMICONDUCTOR", cik="1046179"),
+        ("US", "NOCIK"): SymbolEntry("US", "NOCIK", "No Cik"),
+    })
+    return FinancialsService(settings, httpx.AsyncClient(transport=httpx.MockTransport(replay)), d)
+
+
+async def test_us_quarters_follow_company_fiscal_calendar_and_match_annual():
+    svc = make_us_service(SecReplay())
+    q = await svc.get("US", "AAPL", limit=6)
+    a = await svc.get("US", "AAPL", period="annual", limit=2)
+    assert [(p["fiscal_year"], p["fiscal_quarter"]) for p in q["periods"]] == [
+        (2026, 3), (2026, 2), (2026, 1), (2025, 4), (2025, 3), (2025, 2)]
+    assert [(p["fiscal_year"], p["start"], p["end"]) for p in a["periods"]] == [
+        (2025, "2024-09-29", "2025-09-27"), (2024, "2023-10-01", "2024-09-28")]
+    assert q["currency"] == "USD" and q["source"] == "sec"
+    full = await svc.get("US", "AAPL", limit=8)
+    quarters = {p["fiscal_quarter"]: p for p in full["periods"] if p["fiscal_year"] == 2025}
+    annual = a["periods"][0]
+    for key in ("revenue", "operating_income", "net_income_attributable", "operating_cash_flow", "capex",
+                "dividends_paid", "free_cash_flow"):
+        assert sum(quarters[i]["items"][key] for i in (1, 2, 3, 4)) == annual["items"][key], key
+    assert quarters[4]["items"]["total_assets"] == annual["items"]["total_assets"]
+    q4, q2 = quarters[4], quarters[2]
+    assert q4["filing"]["form"] == "10-K" and "revenue" in q4["derived"]
+    assert q4["items"]["eps_basic"] == round(q4["items"]["eps_basic"], 4)
+    assert q2["filing"]["form"] == "10-Q" and "revenue" not in q2["derived"] and "operating_cash_flow" in q2["derived"]
+    assert q2["items"]["shares_outstanding"] > 1e10 and q2["items"]["capex"] > 0
+
+
+async def test_us_open_fiscal_year_bank_and_foreign_filer():
+    svc = make_us_service(SecReplay())
+    nv = await svc.get("US", "NVDA", limit=3)
+    assert [(p["fiscal_year"], p["fiscal_quarter"]) for p in nv["periods"]] == [(2027, 2), (2027, 1), (2026, 4)]
+    jpm = (await svc.get("US", "JPM", limit=1))["periods"][0]["items"]
+    assert jpm["revenue"] > 0 and jpm["operating_income"] is None and jpm["free_cash_flow"] is None
+    tsm = await svc.get("US", "TSM")
+    assert tsm["periods"] == [] and "20-F" in tsm["note"]
+
+
+async def test_us_fallbacks_for_missing_tags():
+    svc = make_us_service(SecReplay(drop_tags=("CommonStockSharesOutstanding", "Liabilities")))
+    p = (await svc.get("US", "AAPL", limit=1))["periods"][0]
+    assert p["items"]["shares_outstanding"] > 1e10  # 공시 표지(dei) 값
+    assert p["items"]["total_liabilities"] == p["items"]["total_assets"] - p["items"]["total_equity"]
+    assert "total_liabilities" in p["derived"]
+
+
+async def test_us_raw_cache_and_errors():
+    replay = SecReplay()
+    svc = make_us_service(replay)
+    raw = (await svc.get("US", "AAPL", limit=1, raw=True))["periods"][0]["raw"]
+    assert raw and {"concept", "unit", "start", "end", "value"} <= set(raw[0])
+    n = len(replay.calls)
+    await svc.get("US", "AAPL", limit=4)
+    await svc.get("US", "AAPL", period="annual")
+    assert len(replay.calls) == n  # 정규화용 사실은 메모리에서
+    with pytest.raises(UpstreamError):
+        await make_us_service(SecReplay(status=403)).get("US", "AAPL")
+    with pytest.raises(NotConfigured):
+        await make_us_service(SecReplay(), ua="").get("US", "AAPL")
+    with pytest.raises(NotFound):
+        await make_us_service(SecReplay()).get("US", "NOCIK")
+
+
+async def test_us_uses_latest_filed_value_for_restated_period():
+    doc = SEC_FIXTURE[str(AAPL)]
+    facts = doc["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"]
+    q = next(f for f in facts if f["start"] == "2025-12-28" and f["end"] == "2026-03-28")
+    restated = {**q, "val": q["val"] + 1_000_000, "form": "10-Q/A", "filed": "2026-09-01", "accn": "restated"}
+
+    class Restated(SecReplay):
+        def __call__(self, request):
+            resp = super().__call__(request)
+            body = resp.json()
+            body["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"].append(restated)
+            return httpx.Response(200, json=body)
+
+    p = next(p for p in (await make_us_service(Restated()).get("US", "AAPL", limit=3))["periods"]
+             if (p["fiscal_year"], p["fiscal_quarter"]) == (2026, 2))
+    assert p["items"]["net_income_attributable"] == q["val"] + 1_000_000
+    assert p["filing"]["form"] == "10-Q"  # 공시 정보는 그 분기를 처음 보고한 보고서
