@@ -111,3 +111,31 @@ def test_theme_topics_avoid_ambiguous_korean_words():
     assert "gold" not in r.extract("Goldman Sachs raises target")
     assert "india" in r.extract("인도 증시 사상 최고")
     assert "defense" in r.extract("방산株 강세")
+
+
+def test_earnings_topic_real_config():
+    from newsserver.config import ROOT
+    rules = TopicRules.load(ROOT / "config" / "topics.yaml")
+
+    def has(title, summary=""):
+        return "earnings" in rules.extract(title, summary)
+
+    # 공시 — DART 보고서명, EDGAR 8-K 항목
+    assert has("[삼성전자] 연결재무제표기준영업(잠정)실적(공정공시)")
+    assert has("[에코프로] 매출액또는손익구조30%(대규모법인은15%)이상변경")
+    assert has("[현대차] 반기보고서 (2026.06)")
+    assert has("8-K - COSTCO WHOLESALE CORP (0000909832) (Filer)",
+               "Item 2.02: Results of Operations and Financial Condition Item 9.01: Financial Statements")
+    assert not has("[삼성전자] 단일판매ㆍ공급계약체결")
+    assert not has("8-K - X Corp (0000000001) (Filer)", "Item 5.02: Departure of Directors")
+    # 기사
+    assert has("삼성전자 3분기 영업이익 10조…어닝 서프라이즈")
+    assert has("상반기 역대 최대 실적 증권사들")
+    assert has("TD SYNNEX Corporation (SNX) Q3 2026 Earnings Call Transcript")
+    assert has("Cameco Gains 7% Despite Q2 Earnings Miss")
+    assert has("Micron beats estimates on AI memory demand")
+    # 일반 용법의 '실적'·'earnings' 는 제외
+    assert not has("용인시, 자동차 탄소중립포인트 실적 등록")
+    assert not has("수주 실적 사상 최대", "해외 수주 실적")
+    assert not has("Is UiPath Stock Cheap?", "The stock trades at 20 times forward earnings.")
+    assert not has("BTS 월드투어, 3분기 누적 전 세계 매출 1위")

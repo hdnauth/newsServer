@@ -3,7 +3,7 @@
 #   terms    : 대소문자 무시. 영숫자로 시작/끝나면 영숫자 경계 필요, 공백은 0개 이상 공백과 매칭
 #   cs_terms : 대소문자 구분 (소문자일 때 다른 뜻인 약어)
 #   not_terms: (name_hints 전용) 이름에 이것이 있으면 그 힌트를 적용하지 않는다
-version: 2
+version: 3
 
 topics:
   # ── 지수 ──
@@ -106,6 +106,20 @@ topics:
   - key: inflation
     label: 물가
     terms: [물가, 소비자물가, 인플레이션, 디플레이션, inflation, deflation, CPI, PCE]
+  - key: earnings
+    label: 실적
+    # 실적 발표·공시만 — '수주 실적'·'판매 실적' 같은 일반 용법은 제외한다
+    terms: [잠정실적, 잠정 실적, (잠정)실적, 매출액또는손익구조, 분기보고서, 반기보고서, 사업보고서,
+            실적 발표, 실적발표, 분기 실적, 연간 실적, 분기 영업이익, 분기 매출, 분기 순이익, 연간 영업이익,
+            호실적, 실적 부진, 최대 실적, 상반기 실적, 하반기 실적, 실적 시즌, 분기 영업손실,
+            어닝 서프라이즈, 어닝 쇼크, 컨센서스 상회, 컨센서스 하회,
+            earnings call, earnings report, earnings results, earnings season, earnings beat, earnings miss,
+            ahead of earnings, earnings preview, earnings date, reports earnings, earnings estimates,
+            Q1 earnings, Q2 earnings, Q3 earnings, Q4 earnings, earnings roundup,
+            quarterly results, quarterly profit, quarterly revenue, earnings per share,
+            beat estimates, beats estimates, missed estimates, misses estimates, tops estimates,
+            Results of Operations]
+    cs_terms: [EPS]
   - key: etf
     label: ETF
     terms: [ETF, ETFs, 상장지수펀드]
