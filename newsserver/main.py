@@ -12,6 +12,7 @@ from newsserver import __version__
 from newsserver.alerts import Notifier
 from newsserver.api.router import root, v1
 from newsserver.config import Settings, get_settings
+from newsserver.financials.service import FinancialsService
 from newsserver.pipeline import Ingestor
 from newsserver.query import QueryService
 from newsserver.scheduler import Scheduler
@@ -60,6 +61,7 @@ async def build_services(settings: Settings) -> Services:
     return Services(
         settings=settings, db=db, specs=spec_map, directory=directory, topics=topics, ingestor=ingestor,
         query=QueryService(db, directory, topics, spec_map), scheduler=scheduler, http=http,
+        financials=FinancialsService(settings, http, directory),
     )
 
 

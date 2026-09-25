@@ -66,6 +66,7 @@ class SymbolEntry:
     aliases: list[str] = field(default_factory=list)
     cik: str | None = None
     rank: int | None = None
+    corp_code: str | None = None  # DART 고유번호 (한국 종목)
 
     def names(self) -> list[str]:
         return [n for n in [self.name, self.name_en, *self.aliases] if n]
@@ -154,13 +155,15 @@ class SymbolDirectory:
 
     async def load(self, db: Database) -> None:
         async with db.read() as conn:
-            cur = await conn.execute("SELECT market, symbol, name, name_en, aliases_json, cik, rank FROM symbols")
+            cur = await conn.execute(
+                "SELECT market, symbol, name, name_en, aliases_json, cik, rank, corp_code FROM symbols")
             rows = await cur.fetchall()
         entries: dict[Key, SymbolEntry] = {}
         for r in rows:
             entries[(r["market"], r["symbol"])] = SymbolEntry(
                 market=r["market"], symbol=r["symbol"], name=r["name"], name_en=r["name_en"] or "",
                 aliases=list(json.loads(r["aliases_json"] or "[]")), cik=r["cik"], rank=r["rank"],
+                corp_code=r["corp_code"],
             )
         self._rebuild(entries)
         logger.info("심볼 사전 로드 — {}개 종목, 한글 이름 {}개, 영문 이름 {}개",

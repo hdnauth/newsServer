@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     symbol_dict_tagging: bool = True
     refresh_cooldown_sec: int = 300
+
+    # 재무제표 조회 — 원천 응답을 프로세스 메모리에만 둔다 (디스크에 저장하지 않음)
+    financials_cache_ttl_sec: int = 43200
+    financials_cache_max_entries: int = 512
     log_level: str = "INFO"
 
 
