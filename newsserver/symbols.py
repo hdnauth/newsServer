@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -51,6 +52,10 @@ _KR_CODE_REF_RE = re.compile(r"\(\s*(?:[가-힣A-Za-z]+\s*[:：]?\s*)?(\d{6})\s*
 
 MAX_NAME_WORDS = 6
 
+# 사전 태깅 규칙(``tag``·``_index_name``)을 바꾸면 올린다 — 다음 시작 때 보관 중인 기사 전체를 재태깅한다.
+# 사전 내용(종목·이름·별칭)이 바뀐 것은 바뀐 이름이 나오는 기사만 골라 재태깅하므로 올릴 필요가 없다.
+TAGGER_VERSION = 1
+
 
 @dataclass
 class SymbolEntry:
@@ -61,6 +66,7 @@ class SymbolEntry:
     aliases: list[str] = field(default_factory=list)
     cik: str | None = None
     rank: int | None = None
+    corp_code: str | None = None  # DART 고유번호 (한국 종목)
 
     def names(self) -> list[str]:
         return [n for n in [self.name, self.name_en, *self.aliases] if n]
@@ -92,6 +98,28 @@ def _is_title_case(segment: str) -> bool:
     if len(words) < 3:
         return False
     return sum(w[0].isupper() for w in words) / len(words) >= 0.85
+
+
+@dataclass(frozen=True)
+class IndexSnapshot:
+    """사전 태깅 결과를 정하는 색인의 사본 — 갱신 전후를 비교해 재태깅할 기사를 고른다."""
+    hangul: dict[str, tuple]
+    ascii: dict[str, tuple]
+    keys: frozenset[Key]
+
+
+@dataclass
+class TagChanges:
+    """사전 태깅 결과가 달라질 수 있는 변경.
+
+    names: 색인 항목이 바뀐 이름(소문자) — 본문에 이 이름이 나오는 기사만 결과가 달라진다
+    codes: 추가·삭제된 종목 — 명시적 참조(``$NVDA``, ``(005930)``)와 기존 태그가 달라진다
+    """
+    names: set[str] = field(default_factory=set)
+    codes: set[Key] = field(default_factory=set)
+
+    def __bool__(self) -> bool:
+        return bool(self.names or self.codes)
 
 
 def _ascii_words(text: str) -> list[str]:
@@ -127,13 +155,15 @@ class SymbolDirectory:
 
     async def load(self, db: Database) -> None:
         async with db.read() as conn:
-            cur = await conn.execute("SELECT market, symbol, name, name_en, aliases_json, cik, rank FROM symbols")
+            cur = await conn.execute(
+                "SELECT market, symbol, name, name_en, aliases_json, cik, rank, corp_code FROM symbols")
             rows = await cur.fetchall()
         entries: dict[Key, SymbolEntry] = {}
         for r in rows:
             entries[(r["market"], r["symbol"])] = SymbolEntry(
                 market=r["market"], symbol=r["symbol"], name=r["name"], name_en=r["name_en"] or "",
                 aliases=list(json.loads(r["aliases_json"] or "[]")), cik=r["cik"], rank=r["rank"],
+                corp_code=r["corp_code"],
             )
         self._rebuild(entries)
         logger.info("심볼 사전 로드 — {}개 종목, 한글 이름 {}개, 영문 이름 {}개",
@@ -198,6 +228,30 @@ class SymbolDirectory:
         else:
             exact = joined.isupper() and len(joined) <= 5
         ascii_names.setdefault(joined.lower(), []).append(_AsciiName(key, joined, exact, curated, entry.rank))
+
+    # ── 변경 추적 ────────────────────────────────────────────────────────────
+    def rules_fingerprint(self) -> str:
+        """사전 내용과 무관한 태깅 규칙(코드 버전·제외어·영어 단어 목록)의 지문."""
+        h = hashlib.sha256(f"v{TAGGER_VERSION}\n".encode())
+        for word in sorted(self._stopnames):
+            h.update(b"s:" + word.encode() + b"\n")
+        for word in sorted(self._wordlist):
+            h.update(b"w:" + word.encode() + b"\n")
+        return h.hexdigest()[:16]
+
+    def snapshot(self) -> IndexSnapshot:
+        return IndexSnapshot(
+            hangul={name: tuple(sorted(set(keys))) for name, keys in self._hangul.items()},
+            ascii={name: tuple(sorted({(c.key, c.original, c.exact, c.curated) for c in cands}))
+                   for name, cands in self._ascii.items()},
+            keys=frozenset(self.entries),
+        )
+
+    def changes_since(self, old: IndexSnapshot) -> TagChanges:
+        new = self.snapshot()
+        names = {n for n in old.hangul.keys() | new.hangul.keys() if old.hangul.get(n) != new.hangul.get(n)}
+        names |= {n for n in old.ascii.keys() | new.ascii.keys() if old.ascii.get(n) != new.ascii.get(n)}
+        return TagChanges(names=names, codes=set(old.keys ^ new.keys))
 
     # ── 조회 ────────────────────────────────────────────────────────────────
     def get(self, market: str, symbol: str) -> SymbolEntry | None:
@@ -350,19 +404,29 @@ class SymbolDirectory:
             raise ValueError(f"{origin} 사전 항목이 {len(rows)}개뿐 — 갱신 중단")
         now = to_iso(utcnow())
         async with db.write() as conn:
+            # 값이 바뀐 행만 고친다 — 매주 사전 전체(수만 행)를 다시 쓰지 않게
             await conn.executemany(
                 "INSERT INTO symbols(market, symbol, name, name_en, cik, corp_code, rank, origin, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(market, symbol) DO UPDATE SET name = excluded.name, name_en = excluded.name_en, "
                 "cik = excluded.cik, corp_code = excluded.corp_code, rank = excluded.rank, origin = excluded.origin, "
-                "updated_at = excluded.updated_at",
+                "updated_at = excluded.updated_at "
+                "WHERE (symbols.name, symbols.name_en, symbols.cik, symbols.corp_code, symbols.rank, symbols.origin) "
+                "IS NOT (excluded.name, excluded.name_en, excluded.cik, excluded.corp_code, excluded.rank, "
+                "excluded.origin)",
                 [(*r, origin, now) for r in rows],
             )
             # 이번 갱신에 없는 종목(상장폐지 등) 제거. 별칭이 달린 항목은 수동 관리로 보고 남긴다
+            await conn.execute("CREATE TEMP TABLE IF NOT EXISTS _refreshed(market TEXT, symbol TEXT, "
+                               "PRIMARY KEY (market, symbol)) WITHOUT ROWID")
+            await conn.execute("DELETE FROM _refreshed")
+            await conn.executemany("INSERT OR IGNORE INTO _refreshed VALUES (?, ?)", [r[:2] for r in rows])
             await conn.execute(
-                "DELETE FROM symbols WHERE origin = ? AND updated_at < ? AND aliases_json = '[]'",
-                (origin, now),
+                "DELETE FROM symbols WHERE origin = ? AND aliases_json = '[]' AND NOT EXISTS "
+                "(SELECT 1 FROM _refreshed r WHERE r.market = symbols.market AND r.symbol = symbols.symbol)",
+                (origin,),
             )
+            await conn.execute("DELETE FROM _refreshed")
         logger.info("심볼 사전 갱신 — {} {}건", origin, len(rows))
         return len(rows)
 

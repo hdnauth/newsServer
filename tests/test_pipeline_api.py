@@ -137,6 +137,20 @@ async def test_by_symbols_and_article(app_ctx):
     assert (await client.get("/v1/articles/999999")).status_code == 404
 
 
+async def test_by_symbols_source_filter(app_ctx):
+    client, svc = app_ctx
+    await seed(svc)
+    body = {"symbols": [{"symbol": "005930", "market": "KR"}], "limit_per_symbol": 10}
+    everything = (await client.post("/v1/headlines/by-symbols", json=body)).json()["results"]["KR:005930"]
+    assert {i["source"]["key"] for i in everything} == {"yonhap_market", "dart"}
+    news_only = (await client.post("/v1/headlines/by-symbols",
+                                   json={**body, "sources": ["yonhap_market"]})).json()["results"]["KR:005930"]
+    assert [i["source"]["key"] for i in news_only] == ["yonhap_market"]
+    no_dart = (await client.post("/v1/headlines/by-symbols",
+                                 json={**body, "exclude_sources": ["dart"]})).json()["results"]["KR:005930"]
+    assert all(i["source"]["key"] != "dart" for i in no_dart) and no_dart
+
+
 async def test_search_target_tag(app_ctx):
     client, svc = app_ctx
     await ingest(svc, "gnews_kr_symbol", [item("신제품 공개 행사", "https://news.google.test/1")],
@@ -155,6 +169,14 @@ async def test_topics_endpoints(app_ctx):
     stats = (await client.get("/v1/topics/stats", params={"days": 7})).json()
     keys = {t["key"]: t for t in stats["topics"]}
     assert stats["total_articles"] == 9 and keys["semiconductor"]["count"] >= 1
+    assert stats["sources"] is None and stats["kind"] == "all"
+
+    # 피드 소속으로 거르면 스포츠·공시가 분모에서 빠진다
+    only = (await client.get("/v1/topics/stats",
+                             params={"days": 7, "sources": "yonhap_market,cnbc_investing"})).json()
+    assert only["total_articles"] == 6 and only["sources"] == ["yonhap_market", "cnbc_investing"]
+    news = (await client.get("/v1/topics/stats", params={"days": 7, "kind": "news"})).json()
+    assert news["total_articles"] == 7
 
 
 async def test_sources_toggle_and_auth(app_ctx):

@@ -49,6 +49,14 @@ class Topic:
 class NameHint:
     patterns: list[re.Pattern]
     topics: list[str]
+    # 이름에 이것이 있으면 힌트를 적용하지 않는다 — 「인도」 ↔ 「인도네시아」처럼 한국어에는
+    # 단어 경계가 없어 짧은 이름이 긴 이름의 앞부분과 겹친다.
+    not_patterns: list[re.Pattern] = field(default_factory=list)
+
+    def applies(self, text: str) -> bool:
+        if any(p.search(text) for p in self.not_patterns):
+            return False
+        return any(p.search(text) for p in self.patterns)
 
 
 class TopicRules:
@@ -78,6 +86,7 @@ class TopicRules:
             hints.append(NameHint(
                 patterns=_compile(list(item.get("terms") or []), list(item.get("cs_terms") or [])),
                 topics=list(item["topics"]),
+                not_patterns=_compile(list(item.get("not_terms") or []), []),
             ))
         return cls(int(data.get("version") or 1), topics, hints)
 
@@ -90,7 +99,7 @@ class TopicRules:
         text = f"{name} {symbol}".strip()
         out: list[str] = []
         for hint in self.hints:
-            if any(p.search(text) for p in hint.patterns):
+            if hint.applies(text):
                 out.extend(hint.topics)
         out.extend(self.extract(text))
         return list(dict.fromkeys(out))

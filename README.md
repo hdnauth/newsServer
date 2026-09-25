@@ -7,6 +7,7 @@
 - 조회: 종목·주제·카테고리·시장·전문 검색·증분 커서
 - 종목 연결: 소스 태그·공시 종목코드·CIK·사전(회사명·별칭) 태깅 + 조회 시 텍스트 매칭
 - 저장: SQLite(WAL) + FTS5, 기본 1년 보관, 일일 gzip 백업
+- 재무제표: KR(DART)·US(SEC) 재무제표를 저장하지 않고 요청 시 읽어 정규화된 항목으로 제공 (메모리 캐시만)
 - 운영 콘솔: `http://<서버>:5200/` — 소스 상태·조회 테스터·수집량·태깅/별칭 (빌드 없는 단일 페이지)
 - 스택: Python 3.12, FastAPI, aiosqlite, httpx, feedparser
 
@@ -62,6 +63,7 @@ API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | | 상태 이상·복구 경보 |
 | `MAX_CONCURRENT_FETCHES` | `4` | 동시 수집 수 |
 | `REFRESH_COOLDOWN_SEC` | `300` | 종목별 즉시 수집(`refresh=true`) 쿨다운 |
+| `FINANCIALS_CACHE_TTL_SEC` / `FINANCIALS_CACHE_MAX_ENTRIES` | `43200` / `512` | 재무제표 원천 응답의 메모리 캐시 (디스크에 저장하지 않음) |
 | `MAINTENANCE_HOUR` / `LOCAL_TZ` | `3` / `Asia/Seoul` | 일일 유지보수 시각 |
 | `LOG_LEVEL` | `INFO` | |
 
@@ -79,19 +81,20 @@ API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없
 | `kind` | `rss` · `rss_search`(종목별 검색 피드, url 에 `{query}`) · `dart` · `edgar` · `yahoo_symbol`(종목 뉴스 스트림, 요약 포함) |
 | `market` | `KR` · `US` · `GLOBAL` — 종목 텍스트 매칭 시 같은 시장 소스로 제한할 때 쓴다 |
 | `body_kind` | `summary` · `title_only` · `metadata` |
-| `schedule` | `market_aware`(시장 시간에 따라 180s/30m/60m) · `fixed`(`interval_sec`) |
+| `schedule` | `fixed`(`interval_sec`, 생략 시 기본) · `market_aware`(시장 시간에 따라 180s/30m/60m, 종목별 소스는 대상 종목 시장 기준·`market_intervals` 필수) |
 | `naive_tz` | 타임존 표기 없는 발행 시각의 시간대 (예: `Asia/Seoul`) |
-| `retention_days` | 소스별 보관 기간 |
+| `retention_days` | 소스별 보관 기간 — 여러 피드에 실린 기사는 그중 가장 긴 기간 |
 | `per_symbol` / `symbol_markets` | 관심종목별 수집 여부와 대상 시장 |
 | `enabled` | 기본 활성 여부 (런타임에는 `PATCH /v1/sources/{key}`) |
 | `options` | 수집기별 옵션 — 각 `collectors/*.py` 상단 설명 참고 |
 
-편집 후 서버를 재시작하면 반영된다. 기본 구성: 한국·미국 금융 RSS 16종, 일반 뉴스 5종, DART, EDGAR 8-K,
+편집 후 서버를 재시작하면 반영된다. 기본 구성: 한국·미국 금융·기술·국제 RSS 19종, 일반 뉴스 6종(전체·정치·사회·세계·연예·스포츠), DART, EDGAR 8-K,
 Yahoo 종목 뉴스(미국, 요약 포함), Google 뉴스 종목 검색(한국, 기본 비활성).
 
 ### 주제 — `config/topics.yaml`
 
 키워드 규칙으로 주제를 붙인다. 규칙을 바꾸면 `version` 을 올린다 — 재시작 시 보관 중인 기사를 재태깅한다.
+`name_hints` 는 상품 이름 → 주제 추론(`/v1/topics/for`)용이며, `not_terms` 로 겹치는 이름을 제외한다(예: 「인도」 힌트에서 「인도네시아」 제외).
 
 ### 심볼 — `config/symbols/`
 
@@ -111,6 +114,7 @@ Yahoo 종목 뉴스(미국, 요약 포함), Google 뉴스 종목 검색(한국, 
 | `GET/PATCH /v1/sources` · `POST /v1/sources/{key}/refresh` | 소스 상태 · 토글 · 즉시 수집 |
 | `PUT/GET/DELETE /v1/watchlists/{client}` | 종목별 수집 대상 |
 | `GET /v1/symbols/search` · `PUT /v1/symbols/{m}/{s}/aliases` | 심볼 사전 |
+| `GET /v1/financials/{market}/{symbol}` · `/v1/financials/items` | 재무제표 (분기·연간, 정규화 항목) · 항목 정의 |
 | `POST /v1/tagging/preview` | 텍스트에 태깅 규칙 적용 결과 (저장 안 함) |
 | `GET /v1/fetch-log` | 수집 이력 |
 | `GET /health` · `GET /v1/stats` | 상태 · 수집량·용량 통계·용량 예측 |
@@ -149,12 +153,14 @@ async with NewsClient(client="myapp") as nc:            # 기본 http://127.0.0.
     new, cursor = await nc.since(cursor)                # 이후 새 기사만
     await nc.set_watchlist("myapp", [("AAPL", "US"), ("005930", "KR")])
     prompt_block = build_news_body(items, max_items=5)  # LLM 입력용 텍스트
+    fin = await nc.financials("KR", "005930", period="quarter", limit=8)  # 재무제표 (실패 시 None)
 
 with SyncNewsClient(client="script") as nc:
     items = nc.headlines(category="sports", limit=10)
 ```
 
 기본은 fail-soft: 서버 장애 시 예외 대신 빈 결과(`[]`, 커서 유지)와 경고 로그. 예외가 필요하면 `raise_errors=True`.
+`financials()` 는 실패하면 `None` 을 돌려준다 — 데이터가 없는 것(`periods: []`)과 구분하기 위해서다.
 
 ---
 

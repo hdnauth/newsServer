@@ -10,8 +10,12 @@
 #   body_kind    summary | title_only | metadata(공시 메타데이터)
 #   is_filing    공시 여부
 #   enabled      기본 활성 여부 (PATCH /v1/sources/{key} 로 런타임 변경 가능)
-#   retention_days  보관 기간 (없으면 DEFAULT_RETENTION_DAYS)
-#   schedule     market_aware(시장 시간에 따라 market_intervals) | fixed(interval_sec)
+#   retention_days  보관 기간 (없으면 DEFAULT_RETENTION_DAYS). 여러 피드에 실린 기사는 그중 가장 긴
+#                보관 기간을 따른다 — 일반 피드의 보관을 줄여도 금융 피드에도 실린 기사는 남는다
+#   schedule     market_aware(시장 시간에 따라 market_intervals) | fixed(interval_sec). 생략하면 fixed —
+#                이 파일은 금융 피드가 많아 아래 defaults 에서 market_aware 로 둔다
+#                종목별 소스의 market_aware 는 대상 종목의 시장 기준이고, market_intervals 를 직접 적어야 한다
+#                (기본값 open 180초로 종목마다 요청하지 않게). 휴장 주기는 다음 세션 시작 시각에서 끊긴다
 #   max_entries  피드당 최대 처리 항목 수
 #   naive_tz     타임존 표기 없는 발행 시각의 시간대
 #   per_symbol   관심종목별 수집 (rss_search, yahoo_symbol) — symbol_markets 로 대상 시장 제한
@@ -23,7 +27,7 @@ defaults:
   max_entries: 30
 
 sources:
-  # ── 한국 금융 ─────────────────────────────────────────────────────────────
+  # ── 한국 금융·기술 ────────────────────────────────────────────────────────
   - {key: einfomax_all, kind: rss, url: "https://news.einfomax.co.kr/rss/allArticle.xml",
      label: 연합인포맥스 전체, market: KR, lang: ko, category: market, body_kind: summary, naive_tz: Asia/Seoul}
   - {key: einfomax_stock, kind: rss, url: "https://news.einfomax.co.kr/rss/S1N2.xml",
@@ -42,8 +46,10 @@ sources:
      label: 한국경제 경제, market: KR, lang: ko, category: economy, body_kind: title_only}
   - {key: hankyung_finance, kind: rss, url: "https://www.hankyung.com/feed/finance",
      label: 한국경제 금융, market: KR, lang: ko, category: finance, body_kind: title_only}
+  - {key: etnews, kind: rss, url: "https://rss.etnews.com/Section901.xml",
+     label: 전자신문, market: KR, lang: ko, category: tech, body_kind: summary, naive_tz: Asia/Seoul}
 
-  # ── 해외 금융 ─────────────────────────────────────────────────────────────
+  # ── 해외 금융·기술·국제 ───────────────────────────────────────────────────
   - {key: seeking_alpha, kind: rss, url: "https://seekingalpha.com/feed.xml",
      label: Seeking Alpha, market: US, lang: en, category: market, body_kind: title_only,
      options: {symbol_tags: category_tickers}}
@@ -57,6 +63,10 @@ sources:
      label: CNBC 경제, market: US, lang: en, category: economy, body_kind: summary}
   - {key: yahoo_finance, kind: rss, url: "https://finance.yahoo.com/news/rssindex",
      label: Yahoo Finance, market: US, lang: en, category: market, body_kind: title_only}
+  - {key: cnbc_technology, kind: rss, url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910",
+     label: CNBC 기술, market: US, lang: en, category: tech, body_kind: summary}
+  - {key: cnbc_world, kind: rss, url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362",
+     label: CNBC 국제, market: US, lang: en, category: international, body_kind: summary}
   - {key: marketwatch_top, kind: rss, url: "https://feeds.content.dowjones.io/public/rss/mw_topstories",
      label: MarketWatch 톱, market: US, lang: en, category: market, body_kind: summary}
 
@@ -64,12 +74,16 @@ sources:
   - {key: dart, kind: dart, label: DART 공시, market: KR, lang: ko, category: filing,
      body_kind: metadata, is_filing: true, options: {page_count: 100, max_pages: 10}}
   - {key: edgar_8k, kind: edgar, label: SEC EDGAR 8-K, market: US, lang: en, category: filing,
-     body_kind: metadata, is_filing: true, retention_days: 180, options: {forms: [8-K], count: 40}}
+     body_kind: metadata, is_filing: true, retention_days: 180, max_entries: 40,
+     options: {forms: [8-K], count: 40}}
 
   # ── 일반 뉴스 (고정 주기) ─────────────────────────────────────────────────
   - {key: yonhap_all, kind: rss, url: "https://www.yna.co.kr/rss/news.xml",
      label: 연합뉴스 전체, market: KR, lang: ko, category: general, body_kind: summary,
-     schedule: fixed, interval_sec: 900}
+     schedule: fixed, interval_sec: 900, retention_days: 90}
+  - {key: yonhap_politics, kind: rss, url: "https://www.yna.co.kr/rss/politics.xml",
+     label: 연합뉴스 정치, market: KR, lang: ko, category: politics, body_kind: summary,
+     schedule: fixed, interval_sec: 1800, retention_days: 90}
   - {key: yonhap_society, kind: rss, url: "https://www.yna.co.kr/rss/society.xml",
      label: 연합뉴스 사회, market: KR, lang: ko, category: society, body_kind: summary,
      schedule: fixed, interval_sec: 1800, retention_days: 90}
@@ -84,13 +98,16 @@ sources:
      schedule: fixed, interval_sec: 1800, retention_days: 90}
 
   # ── 종목별 (관심종목 대상) ────────────────────────────────────────────────
+  # 프리·애프터마켓은 실적 발표가 몰려 정규장과 같은 1시간, 야간(20~04시 ET)·주말은 3시간.
+  # 보관 120일 — 종목 뉴스는 최근 기사 위주로 쓰인다. 분기(90일) 단위 조회에 여유를 둔 값.
   - {key: yahoo_symbol, kind: yahoo_symbol, label: Yahoo 종목 뉴스, market: US, lang: en,
      category: symbol, body_kind: summary, per_symbol: true, symbol_markets: [US],
-     interval_sec: 3600, max_entries: 20, options: {news_count: 20, request_gap_sec: 3}}
+     market_intervals: {open: 3600, extended: 3600, closed: 10800}, retention_days: 120,
+     max_entries: 20, options: {news_count: 20, request_gap_sec: 3}}
   # Google 뉴스 검색 RSS — 한국 종목의 종목별 커버리지 보강용. 약관상 개인 비상업 용도에 한한다.
   # 링크가 news.google.com 리다이렉트라 다른 피드의 같은 기사와 URL 로 병합되지 않는다(dedup=title 권장).
   - {key: gnews_kr_symbol, kind: rss_search, enabled: false,
      url: "https://news.google.com/rss/search?q={query}+when:2d&hl=ko&gl=KR&ceid=KR:ko",
      label: Google 뉴스 종목 검색, market: KR, lang: ko, category: symbol, body_kind: title_only,
-     per_symbol: true, symbol_markets: [KR], interval_sec: 3600, max_entries: 30,
+     per_symbol: true, symbol_markets: [KR], schedule: fixed, interval_sec: 3600, max_entries: 30,
      options: {query_template: '"{name}"', title_publisher_suffix: true, request_gap_sec: 5}}

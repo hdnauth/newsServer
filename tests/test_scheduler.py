@@ -1,4 +1,6 @@
+import asyncio
 import datetime as dt
+import time
 
 import httpx
 
@@ -16,7 +18,7 @@ def test_backoff_curves():
 
 
 def test_base_interval_market_aware_and_fixed():
-    s = SourceSpec(key="k", kind="rss", label="", market="KR", lang="ko")
+    s = SourceSpec(key="k", kind="rss", label="", market="KR", lang="ko", schedule="market_aware")
     open_kst = dt.datetime(2026, 9, 24, 1, 0, tzinfo=UTC)  # 목 10:00 KST
     night_kst = dt.datetime(2026, 9, 24, 14, 0, tzinfo=UTC)  # 목 23:00 KST
     assert base_interval_sec(s, open_kst) == 180
@@ -139,3 +141,44 @@ async def test_backup_is_gzipped_and_rotated(app_ctx):
     restored.write_bytes(gzip.decompress((svc.settings.backup_dir / files[-1]).read_bytes()))
     with sqlite3.connect(restored) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] >= 1
+
+
+class PacedFakeSymbol:
+    def __init__(self, delay: float = 0.0):
+        self.delay = delay
+        self.calls: list[tuple[str, float]] = []
+
+    def missing_config(self):
+        return None
+
+    async def fetch_symbol(self, target):
+        self.calls.append((target.symbol, time.monotonic()))
+        await asyncio.sleep(self.delay)
+        return FetchResult(items=[RawItem(f"{target.symbol} news", f"https://y/{target.symbol}", published_at=utcnow())])
+
+
+async def test_refresh_symbol_respects_request_gap_across_symbols(app_ctx):
+    _, svc = app_ctx
+    sched = svc.scheduler
+    sched.specs["yahoo_symbol"].options["request_gap_sec"] = 0.2
+    fake = PacedFakeSymbol()
+    sched.collectors["yahoo_symbol"] = fake
+
+    results = await asyncio.gather(*(sched.refresh_symbol("US", s, []) for s in ("AAPL", "MSFT", "NVDA")))
+    assert all(r == {"yahoo_symbol": "ok:1"} for r in results)
+    starts = sorted(t for _, t in fake.calls)
+    assert len(starts) == 3
+    assert all(b - a >= 0.19 for a, b in zip(starts, starts[1:]))  # 동시에 와도 간격을 두고 한 건씩
+
+
+async def test_refresh_symbol_joins_inflight_fetch(app_ctx):
+    _, svc = app_ctx
+    sched = svc.scheduler
+    fake = PacedFakeSymbol(delay=0.1)
+    sched.collectors["yahoo_symbol"] = fake
+
+    first, second = await asyncio.gather(sched.refresh_symbol("US", "NVDA", []),
+                                         sched.refresh_symbol("US", "NVDA", []))
+    assert len(fake.calls) == 1  # 쿨다운 기록 전에 겹친 요청도 원격은 한 번만
+    assert first == second == {"yahoo_symbol": "ok:1"}
+    assert not sched._symbol_inflight

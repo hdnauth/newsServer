@@ -89,6 +89,7 @@ async def headlines_by_symbols(body: BySymbolsRequest, svc=Depends(services)) ->
             symbol=sym, market=mkt, names=item.names, hours=body.hours, limit=body.limit_per_symbol,
             match=body.match, match_summary=body.match_summary, filings=body.filings, kind=body.kind,
             time_basis=body.time_basis, dedup=body.dedup,
+            sources=list(body.sources), exclude_sources=list(body.exclude_sources),
         )
         try:
             results[f"{mkt}:{sym}"] = (await svc.query.headlines(query)).items

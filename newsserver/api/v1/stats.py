@@ -6,6 +6,7 @@ import datetime as dt
 from fastapi import APIRouter, Depends, Query
 
 from newsserver.api.deps import services
+from newsserver.sources import case_sql, retention_by_source
 from newsserver.timeutil import parse_iso, to_iso, utcnow
 
 router = APIRouter(tags=["stats"])
@@ -54,6 +55,7 @@ async def stats(days: int = Query(14, ge=1, le=90), svc=Depends(services)) -> di
         "storage": {**sizes, "free_bytes": free_pages * page_size, "bytes_per_article": bytes_per_article},
         "intake": {"days": days, "avg_per_day": avg_per_day, "per_day": per_day, "per_source": per_source},
         "clients": dict(svc.client_requests),
+        "financials_cache": svc.financials.cache.stats(),
     }
 
 
@@ -83,16 +85,19 @@ async def _projection(svc, first_collected: str | None, days: int, total: int,
         ready_at = first + WARMUP + MIN_OBSERVED
         return {"ready": False, "reason": "관측 기간 부족", "ready_at": to_iso(ready_at)}
 
+    # 기사는 실린 피드들의 보관 기간 중 가장 긴 것을 따른다 (보관 정리와 같은 기준)
+    default_days = svc.settings.default_retention_days
+    days_expr, params = case_sql("COALESCE(f.source_key, a.source_key)",
+                                 retention_by_source(svc.specs.values(), default_days), default_days)
     async with svc.db.read() as conn:
         cur = await conn.execute(
-            "SELECT source_key, COUNT(*) FROM articles WHERE collected_at >= ? GROUP BY source_key", (to_iso(since),))
-        per_source = {r[0]: r[1] for r in await cur.fetchall()}
+            f"SELECT days, COUNT(*) FROM (SELECT MAX({days_expr}) AS days FROM articles a "
+            f"LEFT JOIN article_feeds f ON f.article_id = a.id WHERE a.collected_at >= ? GROUP BY a.id) "
+            f"GROUP BY days",
+            (*params, to_iso(since)))
+        per_retention = {r[0]: r[1] for r in await cur.fetchall()}
     span_days = span.total_seconds() / 86400
-    projected = 0.0
-    for key, n in per_source.items():
-        spec = svc.specs.get(key)
-        retention = spec.retention_days if spec and spec.retention_days else svc.settings.default_retention_days
-        projected += n / span_days * retention
+    projected = sum(n / span_days * days for days, n in per_retention.items())
     measured = total >= MEASURED_MIN_ARTICLES and bytes_per_article
     bpa = bytes_per_article if measured else REFERENCE_BYTES_PER_ARTICLE
     db_bytes = projected * bpa
@@ -100,7 +105,7 @@ async def _projection(svc, first_collected: str | None, days: int, total: int,
         "ready": True,
         "observed_since": to_iso(since),
         "observed_days": round(span_days, 2),
-        "articles_per_day": round(sum(per_source.values()) / span_days),
+        "articles_per_day": round(sum(per_retention.values()) / span_days),
         "default_retention_days": svc.settings.default_retention_days,
         "projected_articles": round(projected),
         "bytes_per_article": bpa,

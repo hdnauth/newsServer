@@ -70,3 +70,13 @@ async def test_build_news_body(served):
     assert "[1] [3h전] 국고채 금리 하락" in text
     assert "(이 소스는 제목만 제공 — 본문 없음)" in text
     assert "출처: 연합뉴스 증권" in text
+
+
+async def test_client_financials(served):
+    async with NewsClient("http://test", transport=httpx.ASGITransport(app=served)) as nc:
+        keys = [i["key"] for i in await nc.financial_items()]
+        assert keys[0] == "revenue" and "free_cash_flow" in keys
+        assert await nc.financials("KR", "005930") is None  # 사전 픽스처에 DART 고유번호가 없다 → 404 → None
+    async with NewsClient("http://test", transport=httpx.ASGITransport(app=served), raise_errors=True) as nc:
+        with pytest.raises(httpx.HTTPStatusError):
+            await nc.financials("KR", "005930")

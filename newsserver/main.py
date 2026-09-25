@@ -12,6 +12,7 @@ from newsserver import __version__
 from newsserver.alerts import Notifier
 from newsserver.api.router import root, v1
 from newsserver.config import Settings, get_settings
+from newsserver.financials.service import FinancialsService
 from newsserver.pipeline import Ingestor
 from newsserver.query import QueryService
 from newsserver.scheduler import Scheduler
@@ -41,6 +42,8 @@ async def build_services(settings: Settings) -> Services:
         wordlist=SymbolDirectory.load_wordlist(settings.wordlist_file),
         stopnames=SymbolDirectory.load_stopnames(settings.stopnames_file),
     )
+    await directory.load(db)
+    before = directory.snapshot()
     await SymbolDirectory.apply_manual_aliases(db, settings.aliases_file)
     await directory.load(db)
 
@@ -53,10 +56,12 @@ async def build_services(settings: Settings) -> Services:
     spec_map = {s.key: s for s in specs}
     scheduler = Scheduler(db=db, settings=settings, specs=specs, ingestor=ingestor, directory=directory,
                           topics=topics, http=http, notifier=Notifier(settings, http))
+    scheduler.pending_tag_changes = directory.changes_since(before)
     await scheduler.init_state()
     return Services(
         settings=settings, db=db, specs=spec_map, directory=directory, topics=topics, ingestor=ingestor,
         query=QueryService(db, directory, topics, spec_map), scheduler=scheduler, http=http,
+        financials=FinancialsService(settings, http, directory),
     )
 
 

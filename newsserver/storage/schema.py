@@ -148,4 +148,8 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    # ── v2 ── CIK 조회는 메모리 사전(SymbolDirectory)이 하므로 인덱스를 쓰는 쿼리가 없다
+    """
+    DROP INDEX IF EXISTS ix_symbols_cik;
+    """,
 ]

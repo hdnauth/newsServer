@@ -2,7 +2,8 @@
 #
 #   terms    : 대소문자 무시. 영숫자로 시작/끝나면 영숫자 경계 필요, 공백은 0개 이상 공백과 매칭
 #   cs_terms : 대소문자 구분 (소문자일 때 다른 뜻인 약어)
-version: 1
+#   not_terms: (name_hints 전용) 이름에 이것이 있으면 그 힌트를 적용하지 않는다
+version: 3
 
 topics:
   # ── 지수 ──
@@ -48,6 +49,43 @@ topics:
     label: 가상자산
     terms: [비트코인, 가상자산, 암호화폐, 가상화폐, 이더리움, 스테이블코인, Bitcoin, crypto, cryptocurrency, Ethereum, stablecoin]
 
+  # 테마 ETF 용 — 섹터·지수 주제만으로는 방산·원전·우주 같은 테마 상품이 주제를 하나도
+  # 받지 못했다(실측 보유 ETF 26종 중 15종). 한국어 단어에는 경계가 없으므로
+  # 다른 뜻과 겹치는 짧은 단어는 넣지 않는다 — 「양자」(양자 회담)·「인도」(원유 ○월 인도분)
+  # ·「무기」(무기한)·「니프티」(니프티 피프티).
+  - key: defense
+    label: 방산
+    terms: [방산, 방위산업, 방위사업, 국방, 미사일, 전투기, 자주포, 무기 수출, defense, defence,
+            Pentagon, 펜타곤, Lockheed, 록히드마틴, 록히드 마틴, Northrop, Raytheon]
+  - key: nuclear
+    label: 원전
+    terms: [원전, 원자력, 소형모듈원자로, 우라늄, 핵연료, nuclear power, nuclear energy,
+            nuclear reactor, nuclear reactors, uranium]
+    cs_terms: [SMR, SMRs]
+  - key: space
+    label: 우주
+    terms: [우주항공, 우주산업, 우주 기업, 위성, 발사체, 스페이스X, SpaceX, satellite, satellites,
+            space industry, space stocks, Rocket Lab, NASA]
+  - key: quantum
+    label: 양자컴퓨팅
+    terms: [양자컴퓨팅, 양자컴퓨터, 양자기술, 양자암호, quantum computing, quantum computer,
+            quantum computers, IonQ, 아이온큐, Rigetti]
+  - key: cleanenergy
+    label: 클린에너지
+    terms: [신재생, 재생에너지, 태양광, 풍력, 수소경제, 친환경 에너지, 클린에너지, clean energy,
+            renewable, renewables, solar, wind power, hydrogen]
+  - key: ev
+    label: 전기차
+    terms: [전기차, 테슬라, Tesla, 자율주행, 로보택시, robotaxi, electric vehicle, electric vehicles]
+    cs_terms: [EV, EVs]
+  - key: power
+    label: 전력·인프라
+    terms: [전력망, 전력 수요, 전력 인프라, 전력기기, 송전, 변압기, power grid, electricity demand,
+            utilities]
+  - key: valueup
+    label: 밸류업
+    terms: [밸류업, 기업가치 제고, 주주환원, value-up]
+
   # ── 거시·자산 ──
   - key: bond
     label: 채권·금리
@@ -68,6 +106,20 @@ topics:
   - key: inflation
     label: 물가
     terms: [물가, 소비자물가, 인플레이션, 디플레이션, inflation, deflation, CPI, PCE]
+  - key: earnings
+    label: 실적
+    # 실적 발표·공시만 — '수주 실적'·'판매 실적' 같은 일반 용법은 제외한다
+    terms: [잠정실적, 잠정 실적, (잠정)실적, 매출액또는손익구조, 분기보고서, 반기보고서, 사업보고서,
+            실적 발표, 실적발표, 분기 실적, 연간 실적, 분기 영업이익, 분기 매출, 분기 순이익, 연간 영업이익,
+            호실적, 실적 부진, 최대 실적, 상반기 실적, 하반기 실적, 실적 시즌, 분기 영업손실,
+            어닝 서프라이즈, 어닝 쇼크, 컨센서스 상회, 컨센서스 하회,
+            earnings call, earnings report, earnings results, earnings season, earnings beat, earnings miss,
+            ahead of earnings, earnings preview, earnings date, reports earnings, earnings estimates,
+            Q1 earnings, Q2 earnings, Q3 earnings, Q4 earnings, earnings roundup,
+            quarterly results, quarterly profit, quarterly revenue, earnings per share,
+            beat estimates, beats estimates, missed estimates, misses estimates, tops estimates,
+            Results of Operations]
+    cs_terms: [EPS]
   - key: etf
     label: ETF
     terms: [ETF, ETFs, 상장지수펀드]
@@ -80,6 +132,15 @@ topics:
     label: 일본
     terms: [일본, 닛케이, 엔화, Japan, Japanese, Nikkei, yen]
     cs_terms: [BOJ]
+
+  - key: india
+    label: 인도
+    terms: [인도 증시, 인도 경제, 인도 정부, 인도 중앙은행, 인도중앙은행, 인도 루피, 인도 시장,
+            인도 총리, 니프티50, 센섹스, 뭄바이, India, Indian, Nifty 50, Sensex, rupee]
+  - key: vietnam
+    label: 베트남
+    terms: [베트남, 하노이, 호찌민, Vietnam, Vietnamese]
+    cs_terms: [VN30]
 
 # 종목·상품 이름 → 관련 주제 (GET /v1/topics/for). 이름에 위 주제 키워드가 있으면 그것도 포함된다.
 name_hints:
@@ -107,3 +168,33 @@ name_hints:
     topics: [china]
   - terms: [일본, TOPIX, 닛케이]
     topics: [japan]
+  # 테마 ETF (version 2)
+  - terms: [방산, 방위, 에어로스페이스, ITA, XAR]
+    topics: [defense]
+  - terms: [원자력, 원전, 우라늄, URA, NLR, URNM]
+    cs_terms: [SMR]
+    topics: [nuclear]
+  - terms: [우주, 스페이스, ARKX]
+    topics: [space]
+  - terms: [양자, QTUM]
+    topics: [quantum]
+  - terms: [클린에너지, 신재생, 태양광, 수소, 친환경, ICLN, TAN, QCLN]
+    topics: [cleanenergy]
+  - terms: [테슬라, 전기차, 자율주행, TSLA]
+    topics: [ev]
+  - terms: [전력, 유틸리티, 그리드, GRID, XLU]
+    topics: [power]
+  - terms: [밸류업]
+    topics: [valueup, kospi]
+  - terms: [미국테크, 빅테크, FANG]
+    topics: [bigtech]
+  - terms: [바이오, 헬스케어]
+    topics: [bio]
+  # 이름 문맥에서는 「인도」가 곧 나라다 (본문 규칙과 달리 짧은 단어를 써도 된다)
+  - terms: [인도, INDA, EPI]
+    cs_terms: [Nifty]
+    not_terms: [인도네시아]
+    topics: [india]
+  - terms: [베트남, VNM]
+    cs_terms: [VN30]
+    topics: [vietnam]

@@ -7,12 +7,12 @@ from fastapi.responses import FileResponse
 
 from newsserver import __version__
 from newsserver.api.deps import services
-from newsserver.api.v1 import headlines, sources, stats, symbols, tagging, topics, watchlists
+from newsserver.api.v1 import financials, headlines, sources, stats, symbols, tagging, topics, watchlists
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 v1 = APIRouter(prefix="/v1")
-for module in (headlines, sources, topics, symbols, tagging, watchlists, stats):
+for module in (headlines, sources, topics, symbols, tagging, watchlists, stats, financials):
     v1.include_router(module.router)
 
 root = APIRouter()

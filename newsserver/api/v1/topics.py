@@ -1,9 +1,11 @@
 """주제 목록·이름 추론·분포 통계."""
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 
-from newsserver.api.deps import parse_market, services
+from newsserver.api.deps import parse_market, services, split_csv
 from newsserver.api.schemas import TopicList
 
 router = APIRouter(tags=["topics"])
@@ -26,7 +28,9 @@ async def topics_for(name: str = Query(..., min_length=1), symbol: str = "", svc
 async def topic_stats(
     days: float = Query(30, gt=0, le=3660),
     market: str | None = None,
+    sources: list[str] | None = Query(None, description="이 피드들에 실린 기사만 (콤마 구분 또는 반복)"),
+    kind: Literal["all", "news", "filing"] = "all",
     svc=Depends(services),
 ) -> dict:
     """기간 내 주제별 기사 수. share_pct 는 태그 전체 중 비중, article_pct 는 기사 중 비중."""
-    return await svc.query.topic_stats(days, parse_market(market))
+    return await svc.query.topic_stats(days, parse_market(market), sources=split_csv(sources), kind=kind)

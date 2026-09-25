@@ -22,13 +22,13 @@
 | `name`, `alias` | | 종목 회사명·별칭 (반복 가능). 사전에 없거나 보강할 이름 |
 | `hours` | | 최근 N시간 |
 | `since`, `until` | | 시각 범위 (ISO-8601) |
-| `since_id` | | 증분 커서 — 이 id 초과를 id 오름차순으로 |
+| `since_id` | | 증분 커서 — 이 id 초과를 id 오름차순으로. 피드 소속·태그 필터와 함께 쓸 때의 한계는 [DESIGN §5.3](DESIGN.md#53-증분-커서) |
 | `limit` | 50 | 1–500 |
 | `topics` | | 주제 키 (`GET /v1/topics`) |
 | `topics_mode` | `any` | `any` \| `all` |
 | `sources` | | 이 피드들에 실린 기사만 |
 | `exclude_sources` | | 이 피드들에**만** 실린 기사 제외 |
-| `category` | | 소스 카테고리 (`economy`, `market`, `sports` …) |
+| `category` | | 소스 카테고리 (`economy`, `market`, `finance`, `tech`, `international`, `politics`, `sports` … — `GET /v1/sources` 의 `category`) — 그 카테고리 피드에 실린 기사 전부. 기사의 `category` 필드는 처음 수집한 피드의 것 |
 | `lang` | | `ko` \| `en` |
 | `kind` | `all` | `all` \| `news` \| `filing` |
 | `body` | `any` | `with_summary` 면 요약이 있는 기사만 |
@@ -39,7 +39,7 @@
 | `market_filter` | `true` | 종목 텍스트 매칭을 같은 시장 소스로 제한 |
 | `time_basis` | `ts` | 시간 조건·정렬 기준 `ts`(발행, 없으면 수집) \| `collected` |
 | `dedup` | `none` | `title` 이면 제목이 같은 교차 소스 기사를 한 건으로 |
-| `refresh` | `false` | 종목 조회 전에 종목별 소스를 즉시 수집 (소스·종목마다 `REFRESH_COOLDOWN_SEC` 쿨다운) |
+| `refresh` | `false` | 종목 조회 전에 종목별 소스를 즉시 수집 (소스·종목마다 `REFRESH_COOLDOWN_SEC` 쿨다운). 원격 요청은 소스마다 `request_gap_sec` 간격으로 한 건씩 나가므로 몰리면 `timeout` 으로 먼저 응답하고 수집은 계속된다. 관심종목으로 등록한 종목은 주기 수집되므로 `refresh` 가 필요 없다 |
 
 응답
 
@@ -105,8 +105,11 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 {"symbols": [{"symbol": "NVDA", "market": "US", "names": ["NVIDIA Corporation"]},
              {"symbol": "005930", "market": "KR"}],
  "hours": 16, "limit_per_symbol": 8,
- "match": "any", "match_summary": true, "filings": "auto", "kind": "all", "time_basis": "ts", "dedup": "none"}
+ "match": "any", "match_summary": true, "filings": "auto", "kind": "all", "time_basis": "ts", "dedup": "none",
+ "sources": [], "exclude_sources": []}
 ```
+
+`sources`·`exclude_sources` 는 `GET /v1/headlines` 의 같은 이름 파라미터와 같은 뜻이다(피드 소속 기준).
 
 → `{"results": {"US:NVDA": [Headline…], "KR:005930": [Headline…]}}`
 
@@ -122,7 +125,7 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 |---|---|
 | `GET /v1/topics` | `{"version": 1, "topics": [{"key": "bond", "label": "채권·금리"}, …]}` |
 | `GET /v1/topics/for?name=&symbol=` | 종목·상품 이름에서 관련 주제 추론. `name=KODEX 미국나스닥100` → `nasdaq`, `bigtech` |
-| `GET /v1/topics/stats?days=30&market=` | 기간 내 주제별 기사 수. `share_pct` = 전체 주제 태그 중 비중, `article_pct` = 기사 중 비중 |
+| `GET /v1/topics/stats?days=30&market=&sources=&kind=` | 기간 내 주제별 기사 수. `share_pct` = 전체 주제 태그 중 비중, `article_pct` = 기사 중 비중. `sources` 는 그 피드들에 실린 기사만(스포츠·연예 같은 일반 피드를 분모에서 뺄 때), `kind` 는 `all` \| `news` \| `filing` |
 
 ---
 
@@ -157,8 +160,90 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 |---|---|
 | `GET /v1/symbols/search?q=&market=&limit=` | 코드·이름·별칭 부분 일치 |
 | `GET /v1/symbols/{market}/{symbol}` | 사전 항목 (`name`, `name_en`, `aliases`, `cik`, `origin`) |
-| `PUT /v1/symbols/{market}/{symbol}/aliases` | `{"aliases": ["삼전"]}` — 별칭 교체. 사전에 없는 종목은 `"name"` 과 함께 보내면 등록. 이후 수집 태깅과 모든 조회 매칭에 즉시 반영 |
+| `PUT /v1/symbols/{market}/{symbol}/aliases` | `{"aliases": ["삼전"]}` — 별칭 교체. 사전에 없는 종목은 `"name"` 과 함께 보내면 등록. 이후 수집 태깅과 모든 조회 매칭에 즉시 반영하고, 보관 중인 기사 중 바뀐 별칭이 나오는 기사는 백그라운드로 재태깅 |
 | `POST /v1/symbols/refresh` | SEC·DART 원격 사전을 백그라운드로 재수신 |
+
+---
+
+## 재무제표
+
+회사의 재무제표를 **저장하지 않고** 원천에서 읽어 정규화해 돌려준다 — KR 은 OpenDART, US 는 SEC XBRL(`companyfacts`).
+같은 원천 응답은 서버 프로세스 메모리에만 잠시 둔다(`FINANCIALS_CACHE_TTL_SEC`, 기본 12시간. 아직 없는 보고서는 1시간).
+KR 은 `DART_API_KEY`, US 는 `EDGAR_USER_AGENT` 가 필요하다.
+
+### `GET /v1/financials/items`
+
+정규화 항목 정의. 응답의 `items` 키는 항상 이 목록 전부이고, 원천에 없으면 `null` 이다.
+
+| key | 이름 | 종류 | 비고 |
+|---|---|---|---|
+| `revenue` | 매출액 | flow | 금융업처럼 매출 개념이 다른 회사는 `null` |
+| `gross_profit` | 매출총이익 | flow | |
+| `operating_income` | 영업이익 | flow | US 은행 등은 `null` |
+| `pretax_income` | 법인세비용차감전순이익 | flow | |
+| `net_income` | 당기순이익 | flow | 비지배지분 포함 |
+| `net_income_attributable` | 지배주주 순이익 | flow | PER·ROE 계산 기준 |
+| `eps_basic` / `eps_diluted` | 기본·희석 주당순이익 | per_share | 통화/주, 소수 4자리 |
+| `total_assets` · `current_assets` · `cash_and_equivalents` | 자산총계·유동자산·현금및현금성자산 | stock | |
+| `total_liabilities` · `current_liabilities` | 부채총계·유동부채 | stock | |
+| `total_equity` · `equity_attributable` | 자본총계(비지배 포함)·지배주주 지분 | stock | PBR·ROE 계산 기준 |
+| `operating_cash_flow` | 영업활동현금흐름 | flow | |
+| `capex` | 유형자산 취득 | flow | 현금 유출을 **양수**로 |
+| `free_cash_flow` | 잉여현금흐름 | flow | 영업활동현금흐름 − 유형자산 취득 (서버 계산) |
+| `dividends_paid` | 배당금 지급 | flow | 현금 유출을 **양수**로 |
+| `shares_outstanding` | 유통 보통주식수 | shares | 자기주식 제외. KR 1·3분기 보고서는 공시하지 않아 `null` |
+
+종류: `flow` 는 기간 합계(분기 3개월·연간 12개월), `stock` 은 기간 말 잔액, `per_share` 는 주당 값, `shares` 는 주식 수.
+
+### `GET /v1/financials/{market}/{symbol}`
+
+| 파라미터 | 기본 | 설명 |
+|---|---|---|
+| `period` | `quarter` | `quarter`(3개월 단위) \| `annual`(회계연도) |
+| `limit` | 8 | 최근 기간 수 1–20 |
+| `basis` | `consolidated` | KR 전용. `consolidated` 는 연결이 없는 회사면 별도로 대체, `separate` 는 별도 |
+| `raw` | false | 원천 계정·사실 전부를 기간마다 함께 준다 |
+
+```json
+{
+  "market": "US", "symbol": "AAPL", "name": "Apple Inc.", "source": "sec", "source_id": "320193",
+  "currency": "USD", "period": "quarter", "basis": "consolidated", "fetched_at": "2026-09-25T01:00:00Z",
+  "periods": [
+    {"fiscal_year": 2026, "fiscal_quarter": 3, "start": "2026-03-29", "end": "2026-06-27",
+     "basis": "consolidated", "filing": {"id": "0000320193-26-000020", "form": "10-Q", "filed": "2026-07-31"},
+     "items": {"revenue": 109417000000, "operating_income": 35700000000, "eps_basic": 2.03,
+               "operating_cash_flow": 34370000000, "shares_outstanding": 14608963000, "...": null},
+     "derived": ["capex", "dividends_paid", "free_cash_flow", "operating_cash_flow"]}
+  ]
+}
+```
+
+- `periods` 는 최신순. `fiscal_year`·`fiscal_quarter` 는 **회사의 회계연도** 기준이다(결산월이 12월이 아닌 회사는
+  달력과 다르다 — 날짜는 `start`·`end` 로 본다). 연간이면 `fiscal_quarter` 는 `null`.
+- `filing` 은 그 기간을 처음 보고한 공시(KR 은 접수번호·보고서명, US 는 accession·10-Q/10-K). 4분기는 연간 보고서다.
+- `derived` 는 원천에 그 기간 값이 없어 서버가 계산한 항목이다.
+  - 4분기 손익 = 연간 − 3분기 누적. 주당순이익의 4분기 값은 주식 수 변동을 반영하지 않은 근사값이다.
+  - 분기 현금흐름 = 누적 − 직전 분기 누적 (분기 보고서는 현금흐름을 누적으로만 보고한다).
+  - `free_cash_flow`, US 에서 `Liabilities` 를 보고하지 않은 회사의 `total_liabilities`(부채와자본총계 − 자본총계).
+- 값의 기준: US 는 같은 기간을 여러 공시가 보고하면 **가장 늦게 공시된 값**(정정·재작성 반영),
+  KR 은 **그 기간의 보고서에 실린 값**이다.
+- `raw`
+  - KR: 그 기간 보고서의 계정 전부 `{statement, account_id, account_name, amount, cumulative_amount}` — 보고서 표기 그대로
+    (분기 보고서의 현금흐름 `amount` 는 누적, 4분기는 사업보고서 값).
+  - US: 그 기간 종료일로 끝나는 us-gaap 사실 전부 `{concept, unit, start, end, value}` — 3개월·누적·연간 기간과
+    시점 값(`start: null`)이 함께 있다. 원본이 커서 캐시하지 않으므로 조금 느리다.
+- 데이터가 없으면 `periods: []` 와 `note`(이유)를 준다 — 예: 20-F 를 내는 외국 기업, 상장 전 법인.
+
+| 상태 | 뜻 |
+|---|---|
+| 404 | 사전에 없는 종목, 또는 원천 식별자(DART 고유번호·CIK)가 없는 종목 |
+| 409 | 원천 자격 증명 미설정 (`DART_API_KEY`, `EDGAR_USER_AGENT`) |
+| 422 | 잘못된 파라미터 (US 에 `basis=separate` 등) |
+| 502 | 원천 오류·한도 초과·연결 실패 — "데이터 없음"과 구분한다. 캐시하지 않으므로 다시 요청하면 된다 |
+
+한계: 구조화된 수치는 분기·반기·사업보고서(KR, 분기 종료 후 45일 안팎)와 10-Q·10-K(US, 40일 안팎)가 나와야 생긴다.
+잠정실적 공시·8-K 실적 발표 시점의 숫자는 여기서 받을 수 없다 — 그 시점에는 `topics=earnings` 로 공시·기사를 받는다.
+주가 기반 지표(PER·PBR·시가총액)는 주가가 필요해 제공하지 않는다(위 항목으로 계산할 수 있다).
 
 ---
 
@@ -206,7 +291,7 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 ### `GET /v1/stats?days=14`
 
 기사 총수·가장 오래된/최신 시각, DB·WAL·백업 크기, 기사당 바이트, 일별·소스별 유입량, 클라이언트별 요청 수,
-그리고 `projection` — 소스별 현재 유입 속도 × 소스별 보관 기간으로 계산한, 보관 기간이 다 찼을 때의 기사 수와
+그리고 `projection` — 현재 유입 속도 × 기사별 보관 기간(실린 피드들의 보관 기간 중 가장 긴 것)으로 계산한, 보관 기간이 다 찼을 때의 기사 수와
 DB·백업 용량 추정치. 첫 수집 직후 6시간(피드에 쌓여 있던 과거 기사를 한꺼번에 받는 구간)은 관측에서 빼고,
 관측이 1일 이상일 때만 `ready: true` 다. 기사가 5만 건 미만이면 기사당 크기로 1년 규모 실측 기준값(1,700 B)을 쓴다
-(`bytes_basis: reference`).
+(`bytes_basis: reference`). `financials_cache` 는 재무제표 메모리 캐시의 항목 수·적중·미스.

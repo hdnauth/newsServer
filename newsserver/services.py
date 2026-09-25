@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from newsserver.config import Settings
+from newsserver.financials.service import FinancialsService
 from newsserver.pipeline import Ingestor
 from newsserver.query import QueryService
 from newsserver.scheduler import Scheduler
@@ -27,4 +28,5 @@ class Services:
     query: QueryService
     scheduler: Scheduler
     http: httpx.AsyncClient
+    financials: FinancialsService
     client_requests: Counter = field(default_factory=Counter)
