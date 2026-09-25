@@ -49,7 +49,8 @@ async def get_symbol(market: str, symbol: str, svc=Depends(services)) -> dict:
 async def put_aliases(market: str, symbol: str, body: AliasesPut, svc=Depends(services)) -> dict:
     """별칭 목록을 교체한다. 사전에 없는 종목은 name 과 함께 새로 등록한다.
 
-    새 별칭은 이후 수집되는 기사의 사전 태깅과 모든 조회의 텍스트 매칭에 즉시 쓰인다.
+    새 별칭은 이후 수집되는 기사의 사전 태깅과 모든 조회의 텍스트 매칭에 즉시 쓰이고,
+    보관 중인 기사 중 바뀐 별칭이 나오는 기사는 백그라운드로 사전 태그를 다시 계산한다.
     """
     mkt = parse_market(market, required=True)
     if mkt == "GLOBAL":
@@ -70,8 +71,12 @@ async def put_aliases(market: str, symbol: str, body: AliasesPut, svc=Depends(se
         else:
             await conn.execute("UPDATE symbols SET aliases_json = ? WHERE market = ? AND symbol = ?",
                                (json.dumps(aliases, ensure_ascii=False), mkt, sym))
+    before = svc.directory.snapshot()
     await svc.directory.load(svc.db)
     svc.scheduler.mark_targets_dirty()
+    changes = svc.directory.changes_since(before)
+    if changes:
+        svc.scheduler.spawn(svc.ingestor.retag_changed(changes), name="retag-aliases")
     return await get_symbol(mkt, sym, svc)
 
 

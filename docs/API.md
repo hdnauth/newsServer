@@ -22,13 +22,13 @@
 | `name`, `alias` | | 종목 회사명·별칭 (반복 가능). 사전에 없거나 보강할 이름 |
 | `hours` | | 최근 N시간 |
 | `since`, `until` | | 시각 범위 (ISO-8601) |
-| `since_id` | | 증분 커서 — 이 id 초과를 id 오름차순으로 |
+| `since_id` | | 증분 커서 — 이 id 초과를 id 오름차순으로. 피드 소속·태그 필터와 함께 쓸 때의 한계는 [DESIGN §5.3](DESIGN.md#53-증분-커서) |
 | `limit` | 50 | 1–500 |
 | `topics` | | 주제 키 (`GET /v1/topics`) |
 | `topics_mode` | `any` | `any` \| `all` |
 | `sources` | | 이 피드들에 실린 기사만 |
 | `exclude_sources` | | 이 피드들에**만** 실린 기사 제외 |
-| `category` | | 소스 카테고리 (`economy`, `market`, `sports` …) |
+| `category` | | 소스 카테고리 (`economy`, `market`, `finance`, `tech`, `international`, `politics`, `sports` … — `GET /v1/sources` 의 `category`) — 그 카테고리 피드에 실린 기사 전부. 기사의 `category` 필드는 처음 수집한 피드의 것 |
 | `lang` | | `ko` \| `en` |
 | `kind` | `all` | `all` \| `news` \| `filing` |
 | `body` | `any` | `with_summary` 면 요약이 있는 기사만 |
@@ -160,7 +160,7 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 |---|---|
 | `GET /v1/symbols/search?q=&market=&limit=` | 코드·이름·별칭 부분 일치 |
 | `GET /v1/symbols/{market}/{symbol}` | 사전 항목 (`name`, `name_en`, `aliases`, `cik`, `origin`) |
-| `PUT /v1/symbols/{market}/{symbol}/aliases` | `{"aliases": ["삼전"]}` — 별칭 교체. 사전에 없는 종목은 `"name"` 과 함께 보내면 등록. 이후 수집 태깅과 모든 조회 매칭에 즉시 반영 |
+| `PUT /v1/symbols/{market}/{symbol}/aliases` | `{"aliases": ["삼전"]}` — 별칭 교체. 사전에 없는 종목은 `"name"` 과 함께 보내면 등록. 이후 수집 태깅과 모든 조회 매칭에 즉시 반영하고, 보관 중인 기사 중 바뀐 별칭이 나오는 기사는 백그라운드로 재태깅 |
 | `POST /v1/symbols/refresh` | SEC·DART 원격 사전을 백그라운드로 재수신 |
 
 ---
@@ -209,7 +209,7 @@ curl 'localhost:5200/v1/headlines?since_id=184233&limit=500'
 ### `GET /v1/stats?days=14`
 
 기사 총수·가장 오래된/최신 시각, DB·WAL·백업 크기, 기사당 바이트, 일별·소스별 유입량, 클라이언트별 요청 수,
-그리고 `projection` — 소스별 현재 유입 속도 × 소스별 보관 기간으로 계산한, 보관 기간이 다 찼을 때의 기사 수와
+그리고 `projection` — 현재 유입 속도 × 기사별 보관 기간(실린 피드들의 보관 기간 중 가장 긴 것)으로 계산한, 보관 기간이 다 찼을 때의 기사 수와
 DB·백업 용량 추정치. 첫 수집 직후 6시간(피드에 쌓여 있던 과거 기사를 한꺼번에 받는 구간)은 관측에서 빼고,
 관측이 1일 이상일 때만 `ready: true` 다. 기사가 5만 건 미만이면 기사당 크기로 1년 규모 실측 기준값(1,700 B)을 쓴다
 (`bytes_basis: reference`).

@@ -758,7 +758,7 @@ function renderKpis() {
   if (p && p.ready) {
     tiles.push(kpi("보관 기간 도달 시 예상", fmtBytes(p.projected_db_bytes + p.projected_backups_bytes),
       `DB ${fmtBytes(p.projected_db_bytes)} + 백업 ${fmtBytes(p.projected_backups_bytes)} · ${fmtNum(p.projected_articles)}건`));
-    $("#projNote").textContent = `예상치: 소스별 현재 유입 속도 × 소스별 보관 기간(기본 ${p.default_retention_days}일). 기사당 크기는 ` +
+    $("#projNote").textContent = `예상치: 현재 유입 속도 × 기사별 보관 기간(실린 피드 중 가장 긴 것, 기본 ${p.default_retention_days}일). 기사당 크기는 ` +
       (p.bytes_basis === "measured" ? "실측값" : `기사가 적은 동안은 1년 규모 실측 기준값(${fmtNum(p.bytes_per_article)} B)`) +
       "을 씁니다. 관측 기간이 짧으면 주말·공휴일이 반영되지 않아 과대·과소 추정될 수 있습니다.";
   }

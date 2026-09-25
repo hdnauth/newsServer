@@ -18,7 +18,7 @@ def test_backoff_curves():
 
 
 def test_base_interval_market_aware_and_fixed():
-    s = SourceSpec(key="k", kind="rss", label="", market="KR", lang="ko")
+    s = SourceSpec(key="k", kind="rss", label="", market="KR", lang="ko", schedule="market_aware")
     open_kst = dt.datetime(2026, 9, 24, 1, 0, tzinfo=UTC)  # 목 10:00 KST
     night_kst = dt.datetime(2026, 9, 24, 14, 0, tzinfo=UTC)  # 목 23:00 KST
     assert base_interval_sec(s, open_kst) == 180

@@ -108,12 +108,19 @@ class Database:
             )
 
     async def backup(self, target: Path) -> None:
-        """온라인 백업 (sqlite backup API)."""
+        """온라인 백업 (sqlite backup API).
+
+        별도의 읽기 전용 연결에서 한 단계로 복사한다. WAL 모드에서는 읽기 트랜잭션 하나의
+        스냅샷을 복사하므로 쓰기 락을 잡지 않아도 일관된 사본이 나오고, 복사하는 동안 수집이 멈추지 않는다.
+        """
         target.parent.mkdir(parents=True, exist_ok=True)
-        async with self._write_lock:
-            assert self._writer is not None
+        src = await aiosqlite.connect(f"file:{self.path}?mode=ro", uri=True)
+        try:
+            await src.execute("PRAGMA busy_timeout=10000")
             dest = await aiosqlite.connect(target)
             try:
-                await self._writer.backup(dest)
+                await src.backup(dest)
             finally:
                 await dest.close()
+        finally:
+            await src.close()

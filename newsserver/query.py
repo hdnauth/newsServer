@@ -138,7 +138,13 @@ class QueryService:
             w.add(f"EXISTS (SELECT 1 FROM article_feeds f WHERE f.article_id = a.id "
                   f"AND f.source_key NOT IN ({_qs(q.exclude_sources)}))", *q.exclude_sources)
         if q.categories:
-            w.add(f"a.category IN ({_qs(q.categories)})", *q.categories)
+            # 기사의 category 는 처음 수집한 피드의 것이라, 그 분류의 피드에 함께 실린 기사도 포함한다
+            feed_keys = [k for k, s in self.specs.items() if s.category in q.categories]
+            clause = f"a.category IN ({_qs(q.categories)})"
+            if feed_keys:
+                clause = (f"({clause} OR a.id IN (SELECT article_id FROM article_feeds "
+                          f"WHERE source_key IN ({_qs(feed_keys)})))")
+            w.add(clause, *q.categories, *feed_keys)
         if q.lang:
             w.add("a.lang = ?", q.lang)
         if q.kind == "news":

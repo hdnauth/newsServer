@@ -79,14 +79,14 @@ API_TOKEN=<무작위 문자열>     # 쓰기 요청 보호. 조회는 토큰 없
 | `kind` | `rss` · `rss_search`(종목별 검색 피드, url 에 `{query}`) · `dart` · `edgar` · `yahoo_symbol`(종목 뉴스 스트림, 요약 포함) |
 | `market` | `KR` · `US` · `GLOBAL` — 종목 텍스트 매칭 시 같은 시장 소스로 제한할 때 쓴다 |
 | `body_kind` | `summary` · `title_only` · `metadata` |
-| `schedule` | `market_aware`(시장 시간에 따라 180s/30m/60m) · `fixed`(`interval_sec`) |
+| `schedule` | `fixed`(`interval_sec`, 생략 시 기본) · `market_aware`(시장 시간에 따라 180s/30m/60m, 종목별 소스는 대상 종목 시장 기준·`market_intervals` 필수) |
 | `naive_tz` | 타임존 표기 없는 발행 시각의 시간대 (예: `Asia/Seoul`) |
-| `retention_days` | 소스별 보관 기간 |
+| `retention_days` | 소스별 보관 기간 — 여러 피드에 실린 기사는 그중 가장 긴 기간 |
 | `per_symbol` / `symbol_markets` | 관심종목별 수집 여부와 대상 시장 |
 | `enabled` | 기본 활성 여부 (런타임에는 `PATCH /v1/sources/{key}`) |
 | `options` | 수집기별 옵션 — 각 `collectors/*.py` 상단 설명 참고 |
 
-편집 후 서버를 재시작하면 반영된다. 기본 구성: 한국·미국 금융 RSS 16종, 일반 뉴스 5종, DART, EDGAR 8-K,
+편집 후 서버를 재시작하면 반영된다. 기본 구성: 한국·미국 금융·기술·국제 RSS 19종, 일반 뉴스 6종(전체·정치·사회·세계·연예·스포츠), DART, EDGAR 8-K,
 Yahoo 종목 뉴스(미국, 요약 포함), Google 뉴스 종목 검색(한국, 기본 비활성).
 
 ### 주제 — `config/topics.yaml`

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml
 
@@ -28,16 +28,30 @@ class SourceSpec:
     enabled: bool = True
     url: str = ""
     retention_days: int | None = None
-    schedule: str = "market_aware"
+    schedule: str = "fixed"
     interval_sec: int = 1800
     market_intervals: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_MARKET_INTERVALS))
     max_entries: int = 30
     # 타임존 표기가 없는 발행 시각을 해석할 시간대
     naive_tz: str = "UTC"
-    # 종목별 수집 소스: 관심종목(watchlist) 각각에 대해 호출한다
+    # 종목별 수집 소스: 관심종목(watchlist) 각각에 대해 호출한다. market_aware 면 대상 종목의 시장 기준
     per_symbol: bool = False
     symbol_markets: list[str] = field(default_factory=list)
     options: dict[str, Any] = field(default_factory=dict)
+
+
+def retention_by_source(specs: Iterable[SourceSpec], default_days: int) -> dict[str, int]:
+    """소스 키 → 보관 일수. sources.yaml 에서 빠진 소스의 기사는 기본값을 따른다."""
+    return {s.key: s.retention_days or default_days for s in specs}
+
+
+def case_sql(column: str, mapping: dict[str, Any], default: Any) -> tuple[str, list[Any]]:
+    """``column`` 값을 ``mapping`` 으로 바꾸는 SQL CASE 식과 파라미터."""
+    if not mapping:
+        return "?", [default]
+    whens = " ".join("WHEN ? THEN ?" for _ in mapping)
+    params = [v for pair in mapping.items() for v in pair]
+    return f"CASE {column} {whens} ELSE ? END", [*params, default]
 
 
 def _as_list(value) -> list[str]:
@@ -69,13 +83,17 @@ def load_sources(path: Path) -> list[SourceSpec]:
         body_kind = str(item.get("body_kind") or "summary")
         if body_kind not in BODY_KINDS:
             raise ValueError(f"sources.yaml[{key}]: body_kind 는 {BODY_KINDS} 중 하나여야 합니다")
-        schedule = str(item.get("schedule") or "market_aware")
+        schedule = str(item.get("schedule") or "fixed")
         if schedule not in SCHEDULES:
             raise ValueError(f"sources.yaml[{key}]: schedule 은 {SCHEDULES} 중 하나여야 합니다")
 
         intervals = dict(DEFAULT_MARKET_INTERVALS)
         intervals.update({k: int(v) for k, v in (item.get("market_intervals") or {}).items()})
         symbol_markets = [m.upper() for m in _as_list(item.get("symbol_markets"))]
+        per_symbol = bool(item.get("per_symbol", False))
+        # 종목별 소스는 종목마다 요청하므로 전역 기본 주기(정규장 180초)를 물려받지 않게 한다
+        if per_symbol and schedule == "market_aware" and not raw.get("market_intervals"):
+            raise ValueError(f"sources.yaml[{key}]: 종목별 소스의 market_aware 는 market_intervals 를 직접 적어야 합니다")
 
         specs.append(SourceSpec(
             key=key,
@@ -94,7 +112,7 @@ def load_sources(path: Path) -> list[SourceSpec]:
             market_intervals=intervals,
             max_entries=int(item.get("max_entries") or 30),
             naive_tz=str(item.get("naive_tz") or "UTC"),
-            per_symbol=bool(item.get("per_symbol", False)),
+            per_symbol=per_symbol,
             symbol_markets=symbol_markets,
             options=dict(item.get("options") or {}),
         ))

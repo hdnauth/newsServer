@@ -6,8 +6,9 @@
 * 종목별 소스: 관심종목(watchlist) 합집합을 대상으로 소스마다 한 번에 한 종목씩 순회한다.
   요청 간격(request_gap_sec)은 즉시 수집(refresh)까지 포함해 소스 단위로 지킨다 — 소비자가
   여러 종목을 연달아 즉시 수집해도 원격에는 간격을 두고 한 건씩 나간다. 같은 종목의 수집이
-  진행 중이면 새로 요청하지 않고 그 결과를 함께 기다린다.
-* 유지보수: 매일 정해진 시각에 보관 기간 정리·수집 이력 정리·백업, 주기적으로 심볼 사전 갱신.
+  진행 중이면 새로 요청하지 않고 그 결과를 함께 기다린다. 종목마다 주기는 대상 종목 시장의 세션을 따른다.
+* 유지보수: 매일 정해진 시각에 보관 기간 정리(피드별 보관 기간 중 가장 긴 것 기준)·수집 이력 정리·백업,
+  주기적으로 심볼 사전 갱신(바뀐 이름이 나오는 기사만 재태깅).
 * 상태 감시: 전 소스 연속 실패·스케줄러 정지를 ``degraded`` 로 보고하고 전환 시 경보.
 """
 from __future__ import annotations
@@ -31,11 +32,11 @@ from newsserver.alerts import Notifier
 from newsserver.collectors import COLLECTORS, PER_SYMBOL_KINDS
 from newsserver.collectors.base import Collector, CollectorError, FetchResult, SymbolTarget
 from newsserver.config import Settings
-from newsserver.markets import market_session
+from newsserver.markets import Session, market_session
 from newsserver.pipeline import IngestStats, Ingestor
-from newsserver.sources import SourceSpec
+from newsserver.sources import SourceSpec, case_sql, retention_by_source
 from newsserver.storage.db import Database
-from newsserver.symbols import SymbolDirectory
+from newsserver.symbols import SymbolDirectory, TagChanges
 from newsserver.timeutil import parse_iso, to_iso, utcnow
 from newsserver.topics import TopicRules
 
@@ -65,6 +66,25 @@ def base_interval_sec(spec: SourceSpec, now: dt.datetime) -> int:
     if spec.schedule == "fixed":
         return spec.interval_sec
     return int(spec.market_intervals[str(market_session(spec.market, now))])
+
+
+SESSION_SCAN_STEP_SEC = 300
+
+
+def symbol_interval_sec(spec: SourceSpec, market: str, now: dt.datetime) -> int:
+    """종목별 소스의 기본 주기. ``market_aware`` 면 대상 종목 시장의 세션을 따른다.
+
+    휴장 주기는 길게 두되 다음 세션(프리마켓 등)이 시작되면 바로 수집하도록 그 시각에서 끊는다.
+    """
+    if spec.schedule == "fixed":
+        return spec.interval_sec
+    session = market_session(market, now)
+    wait = int(spec.market_intervals[str(session)])
+    if session == Session.CLOSED:
+        for offset in range(SESSION_SCAN_STEP_SEC, wait, SESSION_SCAN_STEP_SEC):
+            if market_session(market, now + dt.timedelta(seconds=offset)) != session:
+                return offset
+    return wait
 
 
 class SourceBusy(RuntimeError):
@@ -129,6 +149,8 @@ class Scheduler:
         self._targets_dirty = True
         self._health_status = "ok"
         self._background: set[asyncio.Task] = set()
+        # 기동 때 사전에 합친 변경 — 시작 작업이 해당 기사만 재태깅한다
+        self.pending_tag_changes = TagChanges()
 
     # ── 수명 주기 ────────────────────────────────────────────────────────────
     async def init_state(self) -> None:
@@ -406,7 +428,7 @@ class Scheduler:
             st.fail_streak += 1
             st.last_error = error
             logger.warning("{} [{}:{}] 수집 실패: {}", spec.key, target.market, target.symbol, error)
-        wait = max(spec.interval_sec, fail_backoff_sec(st.fail_streak))
+        wait = max(symbol_interval_sec(spec, target.market, now), fail_backoff_sec(st.fail_streak))
         st.next_poll_at = to_iso(now + dt.timedelta(seconds=wait))
         async with self.db.write() as conn:
             await conn.execute(
@@ -494,6 +516,16 @@ class Scheduler:
 
     async def _startup_jobs(self) -> None:
         try:
+            fingerprint = self.directory.rules_fingerprint()
+            if await self.db.get_meta("symbol_rules_fp") != fingerprint:
+                logger.info("사전 태깅 규칙 변경 → 사전 태그 재태깅")
+                await self.ingestor.retag(topics=False, symbols=True)
+                await self.db.set_meta("symbol_rules_fp", fingerprint)
+                self.pending_tag_changes = TagChanges()
+            if self.pending_tag_changes:
+                # 기동 시 aliases.yaml 에서 합친 별칭
+                changes, self.pending_tag_changes = self.pending_tag_changes, TagChanges()
+                await self.ingestor.retag_changed(changes)
             if await self._symbols_due():
                 await self.refresh_symbols()
             if await self.db.get_meta("topics_version") != str(self.topics.version):
@@ -510,6 +542,7 @@ class Scheduler:
         return last is None or utcnow() - last > dt.timedelta(days=self.settings.symbol_refresh_days)
 
     async def refresh_symbols(self) -> dict[str, int]:
+        before = self.directory.snapshot()
         stats = await self.directory.refresh_remote(
             self.db, self.http, edgar_user_agent=self.settings.edgar_user_agent,
             dart_api_key=self.settings.dart_api_key,
@@ -519,8 +552,8 @@ class Scheduler:
         self.mark_targets_dirty()
         if stats:
             await self.db.set_meta("symbols_refreshed_at", to_iso(utcnow()))
-            # 사전이 바뀌었으니 보관 중인 기사의 사전 태그를 다시 계산한다
-            await self.ingestor.retag(topics=False, symbols=True)
+        # 사전이 바뀐 만큼만 보관 중인 기사의 사전 태그를 다시 계산한다
+        await self.ingestor.retag_changed(self.directory.changes_since(before))
         return stats
 
     async def _check_health_transition(self) -> None:
@@ -554,23 +587,33 @@ class Scheduler:
         logger.info("일일 유지보수 완료 — 삭제 {}", deleted)
 
     async def purge_expired(self, batch: int = 5000) -> dict[str, int]:
-        """소스별 보관 기간이 지난 기사를 삭제한다 (배치 단위로 쓰기 락을 짧게 잡는다)."""
+        """보관 기간이 지난 기사를 삭제한다 (배치 단위로 쓰기 락을 짧게 잡는다).
+
+        기사는 실린 피드들의 보관 기간 중 가장 긴 것을 따른다. 기사 행의 ``source_key`` 는 처음
+        수집한 피드라, 그것만 보면 보관이 짧은 일반 피드가 먼저 가져간 금융 기사가 일찍 지워지고
+        반대로 보관이 긴 피드가 먼저 가져간 일반 기사는 오래 남는다.
+        """
         now = utcnow()
+        default_days = self.settings.default_retention_days
+        cutoffs = {key: to_iso(now - dt.timedelta(days=days))
+                   for key, days in retention_by_source(self.specs.values(), default_days).items()}
+        default_cutoff = to_iso(now - dt.timedelta(days=default_days))
+        feed_cutoff, feed_params = case_sql("f.source_key", cutoffs, default_cutoff)
         async with self.db.read() as conn:
             cur = await conn.execute("SELECT DISTINCT source_key FROM articles")
             keys = [r[0] for r in await cur.fetchall()]
         deleted: dict[str, int] = {}
         for key in keys:
-            spec = self.specs.get(key)
-            days = (spec.retention_days if spec and spec.retention_days else self.settings.default_retention_days)
-            cutoff = to_iso(now - dt.timedelta(days=days))
+            cutoff = cutoffs.get(key, default_cutoff)
             total = 0
             while True:
                 async with self.db.write() as conn:
                     cur = await conn.execute(
                         "DELETE FROM articles WHERE id IN "
-                        "(SELECT id FROM articles WHERE source_key = ? AND ts < ? LIMIT ?)",
-                        (key, cutoff, batch),
+                        "(SELECT a.id FROM articles a WHERE a.source_key = ? AND a.ts < ? "
+                        f"AND NOT EXISTS (SELECT 1 FROM article_feeds f WHERE f.article_id = a.id "
+                        f"AND a.ts >= {feed_cutoff}) LIMIT ?)",
+                        (key, cutoff, *feed_params, batch),
                     )
                     n = cur.rowcount or 0
                 total += n
